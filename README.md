@@ -3,7 +3,7 @@
 A meta MCP server that:
 
 - lists MCP servers available in a preset
-- lazily connects to them when `list_servers()` is called
+- connects to preset servers on startup
 - exposes approved server tools to `execute_code()` as JavaScript libraries
 - stores `console` output separately through log tools
 
@@ -83,7 +83,8 @@ OpenCode-style `{env:NAME}` and `{file:path}` substitutions are supported.
 
 ## Behavior
 
-- `list_servers()` lazily starts every server allowed by the preset and returns which ones started successfully
+- preset servers are started when `programmatic-mcp` starts
+- `list_servers()` returns which servers started successfully and any startup errors
 - `list_tools(server)` returns only the tools allowed for that server in the preset
 - `execute_code(code)` does not manage server lifecycle; it can only use servers that are already started
 - `console.log`, `console.info`, `console.warn`, and `console.error` inside `execute_code()` are stored for `fetch_logs()`

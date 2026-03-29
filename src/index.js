@@ -61,8 +61,13 @@ class MetaMcpRuntime {
   }
 
   async listServers() {
-    await Promise.all([...this.serverEntries.keys()].map((name) => this.ensureServerStarted(name).catch(() => null)));
     return this.listServerSummaries();
+  }
+
+  async startAllServers() {
+    await Promise.all(
+      [...this.serverEntries.keys()].map((name) => this.ensureServerStarted(name).catch(() => null)),
+    );
   }
 
   listServerSummaries() {
@@ -814,7 +819,7 @@ async function createMetaServer(runtime) {
   server.registerTool(
     "list_servers",
     {
-      description: "Start preset servers lazily and list what is available",
+      description: "List preset servers and show which ones started successfully",
       inputSchema: z.object({}),
     },
     async () => {
@@ -924,6 +929,7 @@ async function main() {
 
   const presetName = args[0] || DEFAULT_PRESET;
   const runtime = await MetaMcpRuntime.load(presetName);
+  await runtime.startAllServers();
   const server = await createMetaServer(runtime);
   const transport = new StdioServerTransport();
   let shuttingDown = false;
