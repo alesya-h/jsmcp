@@ -29,6 +29,10 @@ class MetaMcpRuntime {
     this.presetName = presetName;
     this.serverEntries = serverEntries;
     this.startedServers = new Map();
+    this.pendingStarts = new Map();
+    this.startErrors = new Map();
+    this.logs = [];
+    this.nextLogId = 1;
   }
 
   static async load(presetName) {
@@ -37,28 +41,32 @@ class MetaMcpRuntime {
     const rawConfig = await readConfigFile(configPath);
     const parsedConfig = parseJsonConfig(rawConfig, configPath);
     const resolvedConfig = await substituteVariables(parsedConfig, configDirectory);
-    const serversConfig = getPlainObject(resolvedConfig.servers, "Config field \"servers\"");
-    const presetsConfig = getPlainObject(resolvedConfig.presets, "Config field \"presets\"");
+    const serversConfig = getPlainObject(resolvedConfig.servers, 'Config field "servers"');
+    const presetsConfig = getPlainObject(resolvedConfig.presets, 'Config field "presets"');
     const presetConfig = presetsConfig[presetName];
 
     if (presetConfig === undefined) {
       throw new Error(
-        `Preset \"${presetName}\" was not found in ${configPath}. Available presets: ${Object.keys(
+        `Preset "${presetName}" was not found in ${configPath}. Available presets: ${Object.keys(
           presetsConfig,
         ).join(", ") || "none"}`,
       );
     }
 
-    const normalizedPreset = normalizePreset(presetName, presetConfig, serversConfig);
     return new MetaMcpRuntime({
       configPath,
       presetName,
-      serverEntries: normalizedPreset,
+      serverEntries: normalizePreset(presetName, presetConfig, serversConfig),
     });
   }
 
+  async listServers() {
+    await Promise.all([...this.serverEntries.keys()].map((name) => this.ensureServerStarted(name).catch(() => null)));
+    return this.listServerSummaries();
+  }
+
   listServerSummaries() {
-    return [...this.serverEntries.values()].map((entry) => this.buildServerSummary(entry.name));
+    return [...this.serverEntries.keys()].map((name) => this.buildServerSummary(name));
   }
 
   buildServerSummary(name) {
@@ -73,6 +81,7 @@ class MetaMcpRuntime {
       allowedTools: describeAllowedTools(entry.toolPolicy),
       availableTools: started ? started.tools.map(sanitizeTool) : [],
       missingAllowedTools: started ? [...started.missingAllowedTools] : [],
+      error: this.startErrors.get(name),
       command:
         entry.serverConfig.type === "local" ? [...entry.serverConfig.command] : undefined,
       url: entry.serverConfig.type === "remote" ? entry.serverConfig.url : undefined,
@@ -83,32 +92,37 @@ class MetaMcpRuntime {
     };
   }
 
-  async startServers(names) {
-    const uniqueNames = [...new Set(names)];
-    const started = [];
-    const failed = [];
+  async listTools(serverName) {
+    const started = await this.ensureServerStarted(serverName);
+    return started.tools.map(sanitizeTool);
+  }
 
-    for (const name of uniqueNames) {
-      try {
-        started.push(await this.startServer(name));
-      } catch (error) {
-        failed.push({ name, error: getErrorMessage(error) });
-      }
+  async ensureServerStarted(name) {
+    const existing = this.startedServers.get(name);
+    if (existing) {
+      return existing;
     }
 
-    return { started, failed };
+    const pending = this.pendingStarts.get(name);
+    if (pending) {
+      return pending;
+    }
+
+    const startPromise = this.startServer(name).finally(() => {
+      this.pendingStarts.delete(name);
+    });
+
+    this.pendingStarts.set(name, startPromise);
+    return startPromise;
   }
 
   async startServer(name) {
     const entry = this.requireServerEntry(name);
-    const existing = this.startedServers.get(name);
-
-    if (existing) {
-      return this.buildServerSummary(name);
-    }
 
     if (entry.serverConfig.enabled === false) {
-      throw new Error(`Server \"${name}\" is disabled in config.`);
+      const error = `Server "${name}" is disabled in config.`;
+      this.startErrors.set(name, error);
+      throw new Error(error);
     }
 
     const client = new Client({
@@ -116,7 +130,6 @@ class MetaMcpRuntime {
       version: SERVER_VERSION,
     });
     const transport = createClientTransport(entry.serverConfig);
-
     const startedServer = {
       name,
       client,
@@ -151,25 +164,42 @@ class MetaMcpRuntime {
       startedServer.missingAllowedTools =
         entry.toolPolicy.mode === "all"
           ? []
-          : [...entry.toolPolicy.tools].filter(
-              (toolName) => !startedServer.tools.some((tool) => tool.name === toolName),
-            );
+          : [...entry.toolPolicy.tools]
+              .filter((toolName) => !startedServer.tools.some((tool) => tool.name === toolName))
+              .sort();
 
+      this.startErrors.delete(name);
       this.startedServers.set(name, startedServer);
-      return this.buildServerSummary(name);
+      return startedServer;
     } catch (error) {
+      const message = `Failed to start "${name}": ${getErrorMessage(error)}`;
+      this.startErrors.set(name, message);
       await closeClient(client);
-      throw new Error(`Failed to start \"${name}\": ${getErrorMessage(error)}`);
+      throw new Error(message);
     }
   }
 
   async executeCode(code, timeoutMs) {
-    const logs = [];
-    const startedAt = Date.now();
-    const api = this.buildExecutionApi();
-    const context = vm.createContext({
-      ...api,
-      console: createCapturedConsole(logs),
+    if (this.startedServers.size === 0) {
+      throw new Error("No servers are started. Call list_servers first.");
+    }
+
+    const contextValues = this.buildSandboxContext();
+    const context = vm.createContext(contextValues);
+    context.globalThis = context;
+
+    const script = new vm.Script(`(async () => {\n${code}\n})()`, {
+      filename: "execute_code.js",
+    });
+
+    const execution = Promise.resolve(script.runInContext(context, { timeout: timeoutMs }));
+    const result = await withTimeout(execution, timeoutMs, `Code execution exceeded ${timeoutMs}ms.`);
+    return toJsonSafe(result);
+  }
+
+  buildSandboxContext() {
+    const context = {
+      console: createCapturedConsole(this),
       URL,
       TextEncoder,
       TextDecoder,
@@ -177,62 +207,23 @@ class MetaMcpRuntime {
       clearTimeout,
       setInterval,
       clearInterval,
-    });
+    };
 
-    try {
-      const script = new vm.Script(`(async () => {\n${code}\n})()`, {
-        filename: "execute_code.js",
-      });
-      const execution = Promise.resolve(script.runInContext(context, { timeout: timeoutMs }));
-      const result = await withTimeout(
-        execution,
-        timeoutMs,
-        `Code execution exceeded ${timeoutMs}ms.`,
-      );
-
-      return {
-        ok: true,
-        result: toJsonSafe(result),
-        logs,
-        durationMs: Date.now() - startedAt,
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        error: getErrorMessage(error),
-        logs,
-        durationMs: Date.now() - startedAt,
-      };
+    for (const [serverName, started] of this.startedServers) {
+      context[serverName] = this.createServerLibrary(serverName, started.tools);
     }
+
+    return context;
   }
 
-  buildExecutionApi() {
-    return {
-      preset: this.presetName,
-      listServers: () => this.listServerSummaries(),
-      listStartedServers: () =>
-        [...this.startedServers.keys()].map((name) => this.buildServerSummary(name)),
-      startServers: async (names) => {
-        const normalizedNames = Array.isArray(names) ? names : [names];
-        return this.startServers(normalizedNames);
-      },
-      listTools: async (serverName) => {
-        const started = this.requireStartedServer(serverName);
-        return started.tools.map(sanitizeTool);
-      },
-      getServer: (serverName) => ({
-        name: serverName,
-        listTools: async () => {
-          const started = this.requireStartedServer(serverName);
-          return started.tools.map(sanitizeTool);
-        },
-        callTool: async (toolName, args = {}, options = {}) =>
-          this.callTool(serverName, toolName, args, options),
-      }),
-      callTool: async (serverName, toolName, args = {}, options = {}) =>
-        this.callTool(serverName, toolName, args, options),
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    };
+  createServerLibrary(serverName, tools) {
+    const library = Object.create(null);
+
+    for (const tool of tools) {
+      library[tool.name] = async (args = {}, options = {}) => this.callTool(serverName, tool.name, args, options);
+    }
+
+    return Object.freeze(library);
   }
 
   async callTool(serverName, toolName, args = {}, options = {}) {
@@ -240,12 +231,12 @@ class MetaMcpRuntime {
     const started = this.requireStartedServer(serverName);
 
     if (!isToolAllowed(entry.toolPolicy, toolName)) {
-      throw new Error(`Tool \"${toolName}\" is not allowed for server \"${serverName}\".`);
+      throw new Error(`Tool "${toolName}" is not allowed for server "${serverName}".`);
     }
 
-    const advertisedTool = started.tools.find((tool) => tool.name === toolName);
-    if (!advertisedTool) {
-      throw new Error(`Tool \"${toolName}\" is not available on started server \"${serverName}\".`);
+    const tool = started.tools.find((item) => item.name === toolName);
+    if (!tool) {
+      throw new Error(`Tool "${toolName}" is not available on server "${serverName}".`);
     }
 
     const requestOptions = {};
@@ -259,14 +250,36 @@ class MetaMcpRuntime {
       requestOptions,
     );
 
-    return normalizeToolResult(serverName, toolName, result);
+    return unwrapToolResult(serverName, toolName, result);
+  }
+
+  appendLog(level, values) {
+    this.logs.push({
+      id: this.nextLogId,
+      level,
+      message: values.map((value) => inspect(value, { depth: 6, breakLength: 120 })).join(" "),
+      timestamp: new Date().toISOString(),
+    });
+    this.nextLogId += 1;
+  }
+
+  fetchLogs() {
+    const logs = this.logs.map((entry) => ({ ...entry }));
+    this.logs = [];
+    return logs;
+  }
+
+  clearLogs() {
+    const cleared = this.logs.length;
+    this.logs = [];
+    return cleared;
   }
 
   requireServerEntry(name) {
     const entry = this.serverEntries.get(name);
     if (!entry) {
       throw new Error(
-        `Server \"${name}\" is not part of preset \"${this.presetName}\". Allowed servers: ${[
+        `Server "${name}" is not part of preset "${this.presetName}". Allowed servers: ${[
           ...this.serverEntries.keys(),
         ].join(", ") || "none"}`,
       );
@@ -277,7 +290,7 @@ class MetaMcpRuntime {
   requireStartedServer(name) {
     const started = this.startedServers.get(name);
     if (!started) {
-      throw new Error(`Server \"${name}\" has not been started. Use start_servers first.`);
+      throw new Error(`Server "${name}" is not started. Call list_servers first.`);
     }
     return started;
   }
@@ -285,6 +298,7 @@ class MetaMcpRuntime {
   async close() {
     const servers = [...this.startedServers.values()];
     this.startedServers.clear();
+    this.pendingStarts.clear();
     await Promise.allSettled(servers.map((server) => closeClient(server.client)));
   }
 }
@@ -319,11 +333,7 @@ async function substituteVariables(value, configDirectory) {
   }
 
   if (Array.isArray(value)) {
-    const items = [];
-    for (const item of value) {
-      items.push(await substituteVariables(item, configDirectory));
-    }
-    return items;
+    return Promise.all(value.map((item) => substituteVariables(item, configDirectory)));
   }
 
   if (value && typeof value === "object") {
@@ -367,7 +377,7 @@ function normalizePreset(presetName, presetConfig, serversConfig) {
   const presetSource =
     Array.isArray(presetConfig) || typeof presetConfig === "string"
       ? presetConfig
-      : getPlainObject(presetConfig, `Preset \"${presetName}\"`).servers ?? presetConfig;
+      : getPlainObject(presetConfig, `Preset "${presetName}"`).servers ?? presetConfig;
 
   const normalizedEntries = new Map();
 
@@ -378,15 +388,14 @@ function normalizePreset(presetName, presetConfig, serversConfig) {
       addPresetEntry(normalizedEntries, serverName, true);
     }
   } else {
-    const presetObject = getPlainObject(presetSource, `Preset \"${presetName}\" servers`);
+    const presetObject = getPlainObject(presetSource, `Preset "${presetName}" servers`);
     for (const [serverName, rule] of Object.entries(presetObject)) {
       addPresetEntry(normalizedEntries, serverName, rule);
     }
   }
 
   for (const [serverName, entry] of normalizedEntries) {
-    const serverConfig = parseServerConfig(serverName, serversConfig[serverName]);
-    entry.serverConfig = serverConfig;
+    entry.serverConfig = parseServerConfig(serverName, serversConfig[serverName]);
   }
 
   return normalizedEntries;
@@ -410,17 +419,17 @@ function addPresetEntry(target, serverName, rule) {
 }
 
 function parseServerConfig(serverName, config) {
-  const serverConfig = getPlainObject(config, `Server \"${serverName}\" config`);
+  const serverConfig = getPlainObject(config, `Server "${serverName}" config`);
 
   if (serverConfig.type === "local") {
     if (!Array.isArray(serverConfig.command) || serverConfig.command.length === 0) {
-      throw new Error(`Local server \"${serverName}\" must define a non-empty command array.`);
+      throw new Error(`Local server "${serverName}" must define a non-empty command array.`);
     }
 
     return {
       type: "local",
       command: serverConfig.command.map((item) => String(item)),
-      environment: normalizeStringMap(serverConfig.environment, `Server \"${serverName}\" environment`),
+      environment: normalizeStringMap(serverConfig.environment, `Server "${serverName}" environment`),
       enabled: serverConfig.enabled,
       timeout: serverConfig.timeout,
       cwd: typeof serverConfig.cwd === "string" ? serverConfig.cwd : undefined,
@@ -429,13 +438,13 @@ function parseServerConfig(serverName, config) {
 
   if (serverConfig.type === "remote") {
     if (typeof serverConfig.url !== "string" || !serverConfig.url) {
-      throw new Error(`Remote server \"${serverName}\" must define a url.`);
+      throw new Error(`Remote server "${serverName}" must define a url.`);
     }
 
     return {
       type: "remote",
       url: serverConfig.url,
-      headers: normalizeStringMap(serverConfig.headers, `Server \"${serverName}\" headers`),
+      headers: normalizeStringMap(serverConfig.headers, `Server "${serverName}" headers`),
       enabled: serverConfig.enabled,
       timeout: serverConfig.timeout,
       oauth: serverConfig.oauth,
@@ -443,7 +452,7 @@ function parseServerConfig(serverName, config) {
   }
 
   throw new Error(
-    `Server \"${serverName}\" must have type \"local\" or \"remote\", got ${inspect(
+    `Server "${serverName}" must have type "local" or "remote", got ${inspect(
       serverConfig.type,
     )}.`,
   );
@@ -478,7 +487,7 @@ function parseToolPolicy(serverName, rule) {
     return { mode: "subset", tools: new Set(rule.map(String)) };
   }
 
-  const ruleObject = getPlainObject(rule, `Preset rule for server \"${serverName}\"`);
+  const ruleObject = getPlainObject(rule, `Preset rule for server "${serverName}"`);
 
   if (ruleObject.enabled === false) {
     return null;
@@ -504,7 +513,7 @@ function parseToolPolicy(serverName, rule) {
   }
 
   throw new Error(
-    `Preset rule for server \"${serverName}\" must use tools as \"*\" or an array of tool names.`,
+    `Preset rule for server "${serverName}" must use tools as "*" or an array of tool names.`,
   );
 }
 
@@ -517,29 +526,20 @@ function getPlainObject(value, label) {
 
 function createClientTransport(serverConfig) {
   if (serverConfig.type === "local") {
-    const environment = {
-      ...getDefaultEnvironment(),
-      ...(serverConfig.environment ?? {}),
-    };
-
     return new StdioClientTransport({
       command: serverConfig.command[0],
       args: serverConfig.command.slice(1),
-      env: environment,
+      env: {
+        ...getDefaultEnvironment(),
+        ...(serverConfig.environment ?? {}),
+      },
       cwd: serverConfig.cwd,
       stderr: "inherit",
     });
   }
 
-  const requestInit = serverConfig.headers
-    ? {
-        headers: serverConfig.headers,
-      }
-    : undefined;
-
-  return new StreamableHTTPClientTransport(new URL(serverConfig.url), {
-    requestInit,
-  });
+  const requestInit = serverConfig.headers ? { headers: serverConfig.headers } : undefined;
+  return new StreamableHTTPClientTransport(new URL(serverConfig.url), { requestInit });
 }
 
 function getDiscoveryTimeout(serverConfig) {
@@ -549,9 +549,10 @@ function getDiscoveryTimeout(serverConfig) {
 }
 
 function filterTools(tools, toolPolicy) {
-  const filtered = toolPolicy.mode === "all"
-    ? tools
-    : tools.filter((tool) => toolPolicy.tools.has(tool.name));
+  const filtered =
+    toolPolicy.mode === "all"
+      ? tools
+      : tools.filter((tool) => toolPolicy.tools.has(tool.name));
 
   return [...filtered].sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -578,16 +579,32 @@ function isToolAllowed(toolPolicy, toolName) {
   return toolPolicy.mode === "all" || toolPolicy.tools.has(toolName);
 }
 
-function normalizeToolResult(serverName, toolName, result) {
-  return {
-    server: serverName,
-    tool: toolName,
-    isError: Boolean(result.isError),
-    text: renderToolContent(result.content ?? []),
+function unwrapToolResult(serverName, toolName, result) {
+  if (result.isError) {
+    throw new Error(renderToolError(serverName, toolName, result));
+  }
+
+  if (result.structuredContent !== undefined) {
+    return toJsonSafe(result.structuredContent);
+  }
+
+  const text = renderToolContent(result.content ?? []);
+  const nonTextContent = (result.content ?? []).some((item) => item.type !== "text");
+
+  if (!nonTextContent) {
+    return text;
+  }
+
+  return toJsonSafe({
+    text,
     content: result.content ?? [],
-    structuredContent: result.structuredContent,
     meta: result._meta,
-  };
+  });
+}
+
+function renderToolError(serverName, toolName, result) {
+  const text = renderToolContent(result.content ?? []);
+  return text || `Tool "${toolName}" on server "${serverName}" failed.`;
 }
 
 function renderToolContent(content) {
@@ -613,19 +630,14 @@ function renderToolContent(content) {
     .join("\n");
 }
 
-function createCapturedConsole(logs) {
-  const push = (level, values) => {
-    logs.push({
-      level,
-      message: values.map((value) => inspect(value, { depth: 6, breakLength: 120 })).join(" "),
-    });
-  };
+function createCapturedConsole(runtime) {
+  const write = (level, values) => runtime.appendLog(level, values);
 
   return {
-    log: (...values) => push("log", values),
-    info: (...values) => push("info", values),
-    warn: (...values) => push("warn", values),
-    error: (...values) => push("error", values),
+    log: (...values) => write("log", values),
+    info: (...values) => write("info", values),
+    warn: (...values) => write("warn", values),
+    error: (...values) => write("error", values),
   };
 }
 
@@ -684,11 +696,9 @@ function toJsonSafe(value, seen = new WeakSet()) {
 
     seen.add(value);
     const output = {};
-
     for (const [key, item] of Object.entries(value)) {
       output[key] = toJsonSafe(item, seen);
     }
-
     seen.delete(value);
     return output;
   }
@@ -702,57 +712,36 @@ function renderServerListText(presetName, servers) {
   for (const server of servers) {
     const allowedTools =
       server.allowedTools === "all" ? "all tools" : server.allowedTools.join(", ") || "no tools";
-    const status = server.started ? "started" : "not started";
-    const discovered = server.availableTools.length
-      ? ` discovered: ${server.availableTools.map((tool) => tool.name).join(", ")}`
+    const status = server.started ? "started" : "failed";
+    const details = server.availableTools.length
+      ? ` tools: ${server.availableTools.map((tool) => tool.name).join(", ")}`
       : "";
-    lines.push(`- ${server.name} [${server.type}] ${status}; allowed: ${allowedTools}${discovered}`);
+    const error = server.error ? ` error: ${server.error}` : "";
+    lines.push(`- ${server.name} [${server.type}] ${status}; allowed: ${allowedTools}${details}${error}`);
   }
 
   return lines.join("\n");
 }
 
-function renderStartText(presetName, result) {
-  const lines = [`Preset: ${presetName}`];
+function renderToolListText(serverName, tools) {
+  const lines = [`Server: ${serverName}`];
 
-  if (result.started.length > 0) {
-    lines.push("Started:");
-    for (const server of result.started) {
-      const tools = server.availableTools.map((tool) => tool.name).join(", ") || "no allowed tools discovered";
-      lines.push(`- ${server.name}: ${tools}`);
-    }
-  }
-
-  if (result.failed.length > 0) {
-    lines.push("Failed:");
-    for (const failure of result.failed) {
-      lines.push(`- ${failure.name}: ${failure.error}`);
-    }
+  for (const tool of tools) {
+    lines.push(`- ${tool.name}${tool.description ? `: ${tool.description}` : ""}`);
   }
 
   return lines.join("\n");
 }
 
-function renderExecutionText(executionResult) {
-  const lines = [`Duration: ${executionResult.durationMs}ms`];
-
-  if (executionResult.ok) {
-    lines.push(`Result: ${formatValue(executionResult.result)}`);
-  } else {
-    lines.push(`Error: ${executionResult.error}`);
+function renderLogsText(logs) {
+  if (logs.length === 0) {
+    return "No logs.";
   }
 
-  if (executionResult.logs.length > 0) {
-    lines.push("Logs:");
-    for (const entry of executionResult.logs) {
-      lines.push(`- [${entry.level}] ${entry.message}`);
-    }
-  }
-
-  return lines.join("\n");
+  return logs.map((entry) => `${entry.id}. [${entry.level}] ${entry.message}`).join("\n");
 }
 
-function formatValue(value) {
+function formatExecutionValue(value) {
   if (typeof value === "string") {
     return value;
   }
@@ -783,11 +772,11 @@ async function createMetaServer(runtime) {
   server.registerTool(
     "list_servers",
     {
-      description: "List preset servers and their current status",
+      description: "Start preset servers lazily and list what is available",
       inputSchema: z.object({}),
     },
     async () => {
-      const servers = runtime.listServerSummaries();
+      const servers = await runtime.listServers();
       return {
         content: [{ type: "text", text: renderServerListText(runtime.presetName, servers) }],
         structuredContent: {
@@ -800,20 +789,20 @@ async function createMetaServer(runtime) {
   );
 
   server.registerTool(
-    "start_servers",
+    "list_tools",
     {
-      description: "Start one or more servers from the selected preset",
+      description: "List allowed tools for a preset server",
       inputSchema: z.object({
-        servers: z.array(z.string().min(1)).min(1),
+        server: z.string().min(1),
       }),
     },
-    async ({ servers }) => {
-      const result = await runtime.startServers(servers);
+    async ({ server: serverName }) => {
+      const tools = await runtime.listTools(serverName);
       return {
-        content: [{ type: "text", text: renderStartText(runtime.presetName, result) }],
+        content: [{ type: "text", text: renderToolListText(serverName, tools) }],
         structuredContent: {
-          preset: runtime.presetName,
-          ...result,
+          server: serverName,
+          tools,
         },
       };
     },
@@ -822,25 +811,61 @@ async function createMetaServer(runtime) {
   server.registerTool(
     "execute_code",
     {
-      description: "Execute JavaScript that can call tools from started servers",
+      description:
+        "Execute JavaScript against started MCP server namespaces. After calling list_servers, each started server is available as a global object and each allowed tool is a function on it. Example: return await math.add({ a: 2, b: 5 }); Use globalThis[\"server-name\"] or obj[\"tool-name\"] when names are not valid JavaScript identifiers. console.log/info/warn/error write to fetch_logs, not the return value.",
       inputSchema: z.object({
         code: z.string().min(1),
         timeoutMs: z.number().int().positive().max(300000).optional(),
       }),
     },
     async ({ code, timeoutMs }) => {
-      const executionResult = await runtime.executeCode(
-        code,
-        timeoutMs ?? DEFAULT_CODE_TIMEOUT_MS,
-      );
+      try {
+        const value = await runtime.executeCode(code, timeoutMs ?? DEFAULT_CODE_TIMEOUT_MS);
+        const structuredContent =
+          value && typeof value === "object" && !Array.isArray(value)
+            ? value
+            : { value };
 
+        return {
+          content: [{ type: "text", text: formatExecutionValue(structuredContent) }],
+          structuredContent,
+        };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: getErrorMessage(error) }],
+          structuredContent: { error: getErrorMessage(error) },
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "fetch_logs",
+    {
+      description: "Fetch and clear logs emitted by execute_code via console methods",
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const logs = runtime.fetchLogs();
       return {
-        content: [{ type: "text", text: renderExecutionText(executionResult) }],
-        structuredContent: {
-          preset: runtime.presetName,
-          ...executionResult,
-        },
-        isError: !executionResult.ok,
+        content: [{ type: "text", text: renderLogsText(logs) }],
+        structuredContent: { logs },
+      };
+    },
+  );
+
+  server.registerTool(
+    "clear_logs",
+    {
+      description: "Clear stored execute_code logs",
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const cleared = runtime.clearLogs();
+      return {
+        content: [{ type: "text", text: `Cleared ${cleared} log entries.` }],
+        structuredContent: { cleared },
       };
     },
   );
@@ -879,7 +904,7 @@ async function main() {
   });
 
   await server.connect(transport);
-  console.error(`[${SERVER_NAME}] ready with preset \"${presetName}\"`);
+  console.error(`[${SERVER_NAME}] ready with preset "${presetName}"`);
 }
 
 main().catch((error) => {

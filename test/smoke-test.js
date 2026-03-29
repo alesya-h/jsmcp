@@ -69,41 +69,60 @@ try {
     assert.equal(listResult.structuredContent.preset, "default");
     assert.equal(listResult.structuredContent.servers.length, 1);
     assert.equal(listResult.structuredContent.servers[0].name, "math");
-    assert.equal(listResult.structuredContent.servers[0].started, false);
+    assert.equal(listResult.structuredContent.servers[0].started, true);
     assert.deepEqual(listResult.structuredContent.servers[0].allowedTools, ["add"]);
-
-    const startResult = await client.callTool({
-      name: "start_servers",
-      arguments: { servers: ["math"] },
-    });
-    assert.equal(startResult.structuredContent.started.length, 1);
-    assert.equal(startResult.structuredContent.failed.length, 0);
-    assert.equal(startResult.structuredContent.started[0].started, true);
     assert.deepEqual(
-      startResult.structuredContent.started[0].availableTools.map((tool) => tool.name),
+      listResult.structuredContent.servers[0].availableTools.map((tool) => tool.name),
       ["add"],
     );
+
+    const toolListResult = await client.callTool({
+      name: "list_tools",
+      arguments: { server: "math" },
+    });
+    assert.equal(toolListResult.isError, undefined);
+    assert.equal(toolListResult.structuredContent.server, "math");
+    assert.deepEqual(toolListResult.structuredContent.tools.map((tool) => tool.name), ["add"]);
 
     const executeResult = await client.callTool({
       name: "execute_code",
       arguments: {
-        code: `const result = await callTool("math", "add", { a: 2, b: 5 }); return { sum: result.structuredContent.sum, text: result.text };`,
+        code: "return await math.add({ a: 2, b: 5 });",
       },
     });
-    assert.equal(executeResult.isError, false);
-    assert.equal(executeResult.structuredContent.ok, true);
-    assert.equal(executeResult.structuredContent.result.sum, 7);
-    assert.equal(executeResult.structuredContent.result.text, "7");
+    assert.equal(executeResult.isError, undefined);
+    assert.deepEqual(executeResult.structuredContent, { sum: 7 });
+
+    const logResult = await client.callTool({
+      name: "execute_code",
+      arguments: {
+        code: 'console.log("hello", { value: 3 }); return await math.add({ a: 1, b: 2 });',
+      },
+    });
+    assert.deepEqual(logResult.structuredContent, { sum: 3 });
+
+    const fetchLogsResult = await client.callTool({ name: "fetch_logs", arguments: {} });
+    assert.equal(fetchLogsResult.structuredContent.logs.length, 1);
+    assert.equal(fetchLogsResult.structuredContent.logs[0].level, "log");
+    assert.match(fetchLogsResult.structuredContent.logs[0].message, /hello/);
+
+    const drainedLogsResult = await client.callTool({ name: "fetch_logs", arguments: {} });
+    assert.deepEqual(drainedLogsResult.structuredContent.logs, []);
 
     const blockedToolResult = await client.callTool({
       name: "execute_code",
       arguments: {
-        code: `return callTool("math", "repeat", { text: "x", times: 2 });`,
+        code: 'return await math.repeat({ text: "x", times: 2 });',
       },
     });
     assert.equal(blockedToolResult.isError, true);
-    assert.equal(blockedToolResult.structuredContent.ok, false);
-    assert.match(blockedToolResult.structuredContent.error, /not allowed/);
+    assert.match(blockedToolResult.structuredContent.error, /repeat is not a function/);
+
+    const clearLogsResult = await client.callTool({ name: "clear_logs", arguments: {} });
+    assert.equal(clearLogsResult.structuredContent.cleared, 0);
+
+    const emptyLogsResult = await client.callTool({ name: "fetch_logs", arguments: {} });
+    assert.deepEqual(emptyLogsResult.structuredContent.logs, []);
   } finally {
     await client.close();
   }
