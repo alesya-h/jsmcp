@@ -17,7 +17,7 @@ In practice, this means:
 - the agent can then write JavaScript for multi-step work
 - logs stay separate from return values so the code stays easier to reason about
 
-Config is read from `$XDG_CONFIG_HOME/jsmcp/config.json`. If `XDG_CONFIG_HOME` is not set, it falls back to `~/.config/jsmcp/config.json`.
+Config is read from `$XDG_CONFIG_HOME/jsmcp/` or, if `XDG_CONFIG_HOME` is not set, `~/.config/jsmcp/`. Exactly one of `config.json`, `config.yaml`, or `config.yml` must exist there.
 
 ## Why
 
@@ -61,7 +61,7 @@ If no graphical environment is detected, or if you pass `--no-browser`, `jsmcp a
 
 ## Config
 
-The config file is a JSON object with two top-level keys:
+The config file may be JSON or YAML and uses two top-level keys:
 
 - `servers`: server definitions
 - `presets`: which servers and tools are exposed to the agent

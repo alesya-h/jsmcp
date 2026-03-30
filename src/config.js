@@ -1,16 +1,38 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import vm from "node:vm";
 import { inspect } from "node:util";
+import { parse as parseYaml } from "yaml";
 
 import { DEFAULT_DISCOVERY_TIMEOUT_MS, SERVER_NAME } from "./constants.js";
 import { getErrorMessage } from "./utils.js";
 
-export function resolveConfigPath() {
+const CONFIG_FILE_NAMES = ["config.json", "config.yaml", "config.yml"];
+
+function resolveConfigDirectory() {
   const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-  return path.join(configHome, SERVER_NAME, "config.json");
+  return path.join(configHome, SERVER_NAME);
+}
+
+export async function resolveConfigPath() {
+  const configDirectory = resolveConfigDirectory();
+  const configPaths = await findConfigPaths(configDirectory);
+
+  if (configPaths.length === 0) {
+    throw new Error(
+      `Config file not found in ${configDirectory}. Expected exactly one of: ${CONFIG_FILE_NAMES.join(", ")}.`,
+    );
+  }
+
+  if (configPaths.length > 1) {
+    throw new Error(
+      `Multiple config files found in ${configDirectory}: ${configPaths.map((filePath) => path.basename(filePath)).join(", ")}. Keep exactly one config file.`,
+    );
+  }
+
+  return configPaths[0];
 }
 
 function resolveDataHome() {
@@ -22,10 +44,10 @@ export function resolveAuthStorePath() {
 }
 
 export async function loadResolvedConfig() {
-  const configPath = resolveConfigPath();
+  const configPath = await resolveConfigPath();
   const configDirectory = path.dirname(configPath);
   const rawConfig = await readConfigFile(configPath);
-  const parsedConfig = parseJsonConfig(rawConfig, configPath);
+  const parsedConfig = parseConfig(rawConfig, configPath);
   const resolvedConfig = await substituteVariables(parsedConfig, configDirectory);
   return {
     configPath,
@@ -46,11 +68,43 @@ async function readConfigFile(configPath) {
   }
 }
 
+async function findConfigPaths(configDirectory) {
+  try {
+    const entries = await readdir(configDirectory, { withFileTypes: true });
+    const entryNames = new Set(entries.filter((entry) => entry.isFile()).map((entry) => entry.name));
+
+    return CONFIG_FILE_NAMES.filter((fileName) => entryNames.has(fileName)).map((fileName) => path.join(configDirectory, fileName));
+  } catch (error) {
+    if (error && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function parseConfig(rawConfig, configPath) {
+  const extension = path.extname(configPath).toLowerCase();
+
+  if (extension === ".yaml" || extension === ".yml") {
+    return parseYamlConfig(rawConfig, configPath);
+  }
+
+  return parseJsonConfig(rawConfig, configPath);
+}
+
 function parseJsonConfig(rawConfig, configPath) {
   try {
     return JSON.parse(rawConfig);
   } catch (error) {
     throw new Error(`Failed to parse JSON config at ${configPath}: ${getErrorMessage(error)}`);
+  }
+}
+
+function parseYamlConfig(rawConfig, configPath) {
+  try {
+    return parseYaml(rawConfig);
+  } catch (error) {
+    throw new Error(`Failed to parse YAML config at ${configPath}: ${getErrorMessage(error)}`);
   }
 }
 
