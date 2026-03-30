@@ -1,10 +1,10 @@
 {
-  "name": "programmatic-mcp",
+  "name": "jsmcp",
   "version": "1.0.0",
   "description": "Meta MCP server that starts and orchestrates other MCP servers",
   "type": "module",
   "bin": {
-    "programmatic-mcp": "./src/index.js"
+    "jsmcp": "./src/index.js"
   },
   "scripts": {
     "start": "node src/index.js",

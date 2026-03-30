@@ -1,4 +1,4 @@
-# programmatic-mcp
+# jsmcp
 
 A meta MCP server that:
 
@@ -7,7 +7,7 @@ A meta MCP server that:
 - exposes approved server tools to `execute_code()` as JavaScript libraries
 - stores `console` output separately through log tools
 
-Config is read from `$XDG_CONFIG_HOME/programmatic-mcp/config.json`. If `XDG_CONFIG_HOME` is not set, it falls back to `~/.config/programmatic-mcp/config.json`.
+Config is read from `$XDG_CONFIG_HOME/jsmcp/config.json`. If `XDG_CONFIG_HOME` is not set, it falls back to `~/.config/jsmcp/config.json`.
 
 ## Run
 
@@ -83,7 +83,7 @@ OpenCode-style `{env:NAME}` and `{file:path}` substitutions are supported.
 
 ## Behavior
 
-- preset servers are started when `programmatic-mcp` starts
+- preset servers are started when `jsmcp` starts
 - `list_servers()` returns which servers started successfully and any startup errors
 - `list_tools(server)` returns only the tools allowed for that server in the preset
 - `execute_code(code)` does not manage server lifecycle; it can only use servers that are already started

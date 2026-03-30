@@ -17,7 +17,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-const SERVER_NAME = "programmatic-mcp";
+const SERVER_NAME = "jsmcp";
 const SERVER_VERSION = "1.0.0";
 const DEFAULT_PRESET = "default";
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 5000;

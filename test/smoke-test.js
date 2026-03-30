@@ -15,12 +15,12 @@ const projectRoot = path.resolve(__dirname, "..");
 const fixtureServerPath = path.join(projectRoot, "test", "fixtures", "arithmetic-server.js");
 const metaServerPath = path.join(projectRoot, "src", "index.js");
 
-const tempConfigHome = await mkdtemp(path.join(os.tmpdir(), "programmatic-mcp-"));
+const tempConfigHome = await mkdtemp(path.join(os.tmpdir(), "jsmcp-"));
 
 try {
-  await mkdir(path.join(tempConfigHome, "programmatic-mcp"), { recursive: true });
+  await mkdir(path.join(tempConfigHome, "jsmcp"), { recursive: true });
   await writeFile(
-    path.join(tempConfigHome, "programmatic-mcp", "config.json"),
+    path.join(tempConfigHome, "jsmcp", "config.json"),
     JSON.stringify(
       {
         servers: {
