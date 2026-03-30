@@ -9,14 +9,28 @@ A meta MCP server that:
 
 Config is read from `$XDG_CONFIG_HOME/jsmcp/config.json`. If `XDG_CONFIG_HOME` is not set, it falls back to `~/.config/jsmcp/config.json`.
 
+## Install
+
+```bash
+npm install -g @alesya_h/jsmcp
+```
+
+Or run it without installing globally:
+
+```bash
+npx @alesya_h/jsmcp
+```
+
 ## Run
 
 ```bash
-node src/index.js
-node src/index.js my-preset
-node src/index.js auth
-node src/index.js auth firefox_devtools
+jsmcp
+jsmcp my-preset
+jsmcp auth
+jsmcp auth firefox_devtools
 ```
+
+If you are running from a source checkout instead of an installed package, replace `jsmcp` with `node src/index.js`.
 
 When running the MCP server, the only optional argument is the preset name. If omitted, `default` is used.
 

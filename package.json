@@ -1,11 +1,28 @@
 {
-  "name": "jsmcp",
+  "name": "@alesya_h/jsmcp",
   "version": "1.0.0",
-  "description": "Meta MCP server that starts and orchestrates other MCP servers",
+  "description": "MCP server that allows agents to work with other MCP tools programmatically by writing JavaScript",
+  "license": "MIT",
+  "author": "Alesya Huzik",
   "type": "module",
-  "bin": {
-    "jsmcp": "./src/index.js"
+  "engines": {
+    "node": ">=18"
   },
+  "bin": {
+    "jsmcp": "src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "javascript",
+    "cli",
+    "oauth"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "check": "node --check src/index.js",
