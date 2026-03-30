@@ -4,6 +4,14 @@
   "description": "MCP server that allows agents to work with other MCP tools programmatically by writing JavaScript",
   "license": "MIT",
   "author": "Alesya Huzik",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alesya-h/jsmcp.git"
+  },
+  "homepage": "https://github.com/alesya-h/jsmcp#readme",
+  "bugs": {
+    "url": "https://github.com/alesya-h/jsmcp/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=18"
