@@ -68,7 +68,7 @@ The config file may be JSON or YAML and uses two top-level keys:
 
 Server names must be valid JavaScript identifiers because `execute_code()` exposes them directly as globals.
 
-`jsmcp` accepts both its original config style and the overlapping Claude Code MCP style for the common fields:
+`jsmcp` accepts both OpenCode MCP config style and the overlapping Claude Code MCP style for the common fields:
 
 - local servers: `type: "local"` or `type: "stdio"`
 - remote servers: `type: "remote"`, `type: "http"`, or `type: "sse"`
