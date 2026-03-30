@@ -37,12 +37,6 @@ async function testYamlConfig() {
         "    command: node",
         "    args:",
         `      - ${JSON.stringify(fixtureServerPath)}`,
-        "presets:",
-        "  default:",
-        "    servers:",
-        "      math:",
-        "        tools:",
-        "          - add",
       ].join("\n") + "\n",
     );
 
@@ -88,11 +82,11 @@ async function testDuplicateConfigsFail() {
     await mkdir(path.join(tempConfigHome, "jsmcp"), { recursive: true });
     await writeFile(
       path.join(tempConfigHome, "jsmcp", "config.json"),
-      JSON.stringify({ servers: {}, presets: { default: {} } }, null, 2),
+      JSON.stringify({ servers: {} }, null, 2),
     );
     await writeFile(
       path.join(tempConfigHome, "jsmcp", "config.yaml"),
-      "servers: {}\npresets:\n  default: {}\n",
+      "servers: {}\n",
     );
 
     const env = Object.fromEntries(

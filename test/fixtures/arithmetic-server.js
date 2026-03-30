@@ -68,5 +68,25 @@ server.registerTool(
   }),
 );
 
+for (const toolName of [
+  "kagi_search_fetch",
+  "ConfluenceFetch",
+  "IssueLookup",
+  "foobar_baz_one",
+  "foobar_baz_two",
+]) {
+  server.registerTool(
+    toolName,
+    {
+      description: `Fixture tool ${toolName}`,
+      inputSchema: z.object({}),
+    },
+    async () => ({
+      content: [{ type: "text", text: toolName }],
+      structuredContent: { value: toolName },
+    }),
+  );
+}
+
 const transport = new StdioServerTransport();
 await server.connect(transport);

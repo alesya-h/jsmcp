@@ -46,7 +46,7 @@ npx @alesya_h/jsmcp
 
 ```bash
 jsmcp
-jsmcp my-preset
+jsmcp work
 jsmcp auth
 jsmcp auth firefox_devtools
 ```
@@ -61,10 +61,10 @@ If no graphical environment is detected, or if you pass `--no-browser`, `jsmcp a
 
 ## Config
 
-The config file may be JSON or YAML and uses two top-level keys:
+The config file may be JSON or YAML and uses these top-level keys:
 
 - `servers`: server definitions
-- `presets`: which servers and tools are exposed to the agent
+- `presets`: optional overrides for which servers and tools are exposed to the agent
 
 Server names must be valid JavaScript identifiers because `execute_code()` exposes them directly as globals.
 
@@ -79,7 +79,7 @@ Supported `servers.<name>` fields:
 
 - `type`: required; one of `local`, `stdio`, `remote`, `http`, `sse`
 - `description`: optional string shown in `list_servers()`
-- `enabled`: optional boolean; `false` disables the server
+- `enabled`: optional boolean; defaults to `true`
 - `timeout`: optional number in milliseconds used for initial tool discovery
 
 For local / stdio servers:
@@ -118,7 +118,25 @@ For `{file:path}`:
 - `~/...` resolves from the user home directory
 - absolute paths are used as-is
 
-`presets` decides which servers are visible and which tools from each server are allowed.
+If `presets` is omitted, the default preset includes every server with `enabled !== false` and allows all of that server's tools.
+
+If `presets` is present, it is an object of preset names. Each preset is an object of per-server overrides layered on top of the server definitions:
+
+- `presets.default`: optional overrides for the default preset
+- any other preset name, such as `presets.work`: additional named preset overrides
+
+Within a preset, server rules work like this:
+
+- omitted server rule: use the server definition as-is
+- `true`: include that server and allow all its tools
+- `false`: exclude that server from that preset
+- `"tool_name"`: include only that exact tool
+- array entries may be:
+  - exact tool name strings
+  - `{ "regex": "..." }` selectors
+  - `{ "glob": "..." }` selectors
+
+If a server has `enabled: false` in `servers`, adding it to a preset enables it for that preset.
 
 Example:
 
@@ -149,31 +167,15 @@ Example:
   },
   "presets": {
     "default": {
-      "servers": {
-        "math": {
-          "tools": ["add", "multiply"]
-        },
-        "docs": {
-          "tools": ["search", "fetch_page"]
-        }
-      }
+      "math": ["add", { "glob": "mul_*" }],
+      "docs": [{ "regex": "(search|fetch)" }]
     },
-    "math-only": ["math"]
+    "work": {
+      "docs": true
+    }
   }
 }
 ```
-
-Accepted preset forms:
-
-- `"preset": ["server-a", "server-b"]`
-- `"preset": { "servers": { "server-a": true } }`
-- `"preset": { "servers": { "server-a": { "tools": ["tool1"] } } }`
-
-Tool rules:
-
-- `true`, omitted `tools`, or `"*"` means all tools from that server
-- `tools: ["name"]` restricts access to the listed tools
-- `false` or `enabled: false` removes that server from the preset
 
 Compatibility notes:
 
@@ -193,7 +195,7 @@ OAuth tokens and registration state are stored in `$XDG_DATA_HOME/jsmcp/oauth.js
 
 ## Behavior
 
-- preset servers are started when `jsmcp` starts
+- servers in the default preset are started when `jsmcp` starts
 - `list_servers()` is the required first step so the agent can learn what capabilities are available
 - you must call `list_tools(server)` before using a server in `execute_code()` so you know the exact tool names, aliases, and schemas
 - `list_tools(server)` returns only the tools allowed for that server in the preset

@@ -47,15 +47,6 @@ try {
             oauth: false,
           },
         },
-        presets: {
-          default: {
-            servers: {
-              docs: true,
-              private_docs: true,
-              public_docs: true,
-            },
-          },
-        },
       },
       null,
       2,

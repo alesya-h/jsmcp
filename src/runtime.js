@@ -34,20 +34,11 @@ export class MetaMcpRuntime {
 
   static async load(presetName) {
     const { configPath, serversConfig, presetsConfig } = await loadResolvedConfig();
-    const presetConfig = presetsConfig[presetName];
-
-    if (presetConfig === undefined) {
-      throw new Error(
-        `Preset "${presetName}" was not found in ${configPath}. Available presets: ${Object.keys(presetsConfig).join(
-          ", ",
-        ) || "none"}`,
-      );
-    }
 
     return new MetaMcpRuntime({
       configPath,
       presetName,
-      serverEntries: normalizePreset(presetName, presetConfig, serversConfig),
+      serverEntries: normalizePreset(presetName, serversConfig, presetsConfig),
       authStore: new AuthStateStore(resolveAuthStorePath()),
     });
   }
@@ -115,7 +106,6 @@ export class MetaMcpRuntime {
       client,
       transport,
       tools: [],
-      missingAllowedTools: [],
     };
 
     transport.onclose = () => {
@@ -141,12 +131,6 @@ export class MetaMcpRuntime {
       });
 
       startedServer.tools = filterTools(listToolsResult.tools, entry.toolPolicy);
-      startedServer.missingAllowedTools =
-        entry.toolPolicy.mode === "all"
-          ? []
-          : [...entry.toolPolicy.tools]
-              .filter((toolName) => !startedServer.tools.some((tool) => tool.name === toolName))
-              .sort();
 
       this.startErrors.delete(name);
       this.startedServers.set(name, startedServer);
@@ -364,7 +348,7 @@ function filterTools(tools, toolPolicy) {
   const filtered =
     toolPolicy.mode === "all"
       ? tools
-      : tools.filter((tool) => toolPolicy.tools.has(tool.name));
+      : tools.filter((tool) => matchesToolPolicy(toolPolicy, tool.name));
 
   return [...filtered].sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -392,7 +376,19 @@ function createToolAlias(toolName) {
 }
 
 function isToolAllowed(toolPolicy, toolName) {
-  return toolPolicy.mode === "all" || toolPolicy.tools.has(toolName);
+  return toolPolicy.mode === "all" || matchesToolPolicy(toolPolicy, toolName);
+}
+
+function matchesToolPolicy(toolPolicy, toolName) {
+  return toolPolicy.selectors.some((selector) => matchesToolSelector(selector, toolName));
+}
+
+function matchesToolSelector(selector, toolName) {
+  if (selector.type === "exact") {
+    return selector.value === toolName;
+  }
+
+  return selector.matcher.test(toolName);
 }
 
 function unwrapToolResult(serverName, toolName, result) {

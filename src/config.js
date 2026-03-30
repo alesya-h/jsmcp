@@ -6,7 +6,7 @@ import vm from "node:vm";
 import { inspect } from "node:util";
 import { parse as parseYaml } from "yaml";
 
-import { DEFAULT_DISCOVERY_TIMEOUT_MS, SERVER_NAME } from "./constants.js";
+import { DEFAULT_DISCOVERY_TIMEOUT_MS, DEFAULT_PRESET, SERVER_NAME } from "./constants.js";
 import { getErrorMessage } from "./utils.js";
 
 const CONFIG_FILE_NAMES = ["config.json", "config.yaml", "config.yml"];
@@ -53,7 +53,10 @@ export async function loadResolvedConfig() {
     configPath,
     resolvedConfig,
     serversConfig: getPlainObject(resolvedConfig.servers, 'Config field "servers"'),
-    presetsConfig: getPlainObject(resolvedConfig.presets, 'Config field "presets"'),
+    presetsConfig:
+      resolvedConfig.presets === undefined
+        ? undefined
+        : getPlainObject(resolvedConfig.presets, 'Config field "presets"'),
   };
 }
 
@@ -158,69 +161,62 @@ function resolveReferencedFile(filePath, configDirectory) {
   return path.resolve(configDirectory, filePath);
 }
 
-export function normalizePreset(presetName, presetConfig, serversConfig) {
-  const presetSource =
-    Array.isArray(presetConfig) || typeof presetConfig === "string"
-      ? presetConfig
-      : getPlainObject(presetConfig, `Preset "${presetName}"`).servers ?? presetConfig;
-
+export function normalizePreset(presetName, serversConfig, presetsConfig) {
+  const presetOverrides = selectPresetOverrides(presetName, presetsConfig);
   const normalizedEntries = new Map();
 
-  if (typeof presetSource === "string") {
-    addPresetEntry(normalizedEntries, presetSource, true);
-  } else if (Array.isArray(presetSource)) {
-    for (const serverName of presetSource) {
-      addPresetEntry(normalizedEntries, serverName, true);
-    }
-  } else {
-    const presetObject = getPlainObject(presetSource, `Preset "${presetName}" servers`);
-    for (const [serverName, rule] of Object.entries(presetObject)) {
-      addPresetEntry(normalizedEntries, serverName, rule);
-    }
-  }
+  validatePresetOverrides(presetOverrides, serversConfig);
 
-  for (const [serverName, entry] of normalizedEntries) {
-    const serverConfig = parseServerConfig(serverName, serversConfig[serverName]);
+  for (const [serverName, rawServerConfig] of Object.entries(serversConfig)) {
+    const serverConfig = parseServerConfig(serverName, rawServerConfig);
+    const rule = Object.hasOwn(presetOverrides, serverName) ? presetOverrides[serverName] : undefined;
+    const toolPolicy = parseToolPolicy(serverName, rule, serverConfig.enabled);
 
-    if (serverConfig.enabled === false && entry.presetEnabledOverride !== true) {
-      normalizedEntries.delete(serverName);
+    if (!toolPolicy) {
       continue;
     }
 
-    entry.serverConfig =
-      entry.presetEnabledOverride === true ? { ...serverConfig, enabled: true } : serverConfig;
+    normalizedEntries.set(serverName, {
+      name: serverName,
+      toolPolicy,
+      serverConfig: rule === undefined ? serverConfig : { ...serverConfig, enabled: true },
+    });
   }
 
   return normalizedEntries;
 }
 
-function addPresetEntry(target, serverName, rule) {
-  if (typeof serverName !== "string" || !serverName) {
-    throw new Error(`Preset contains an invalid server name: ${inspect(serverName)}`);
+function selectPresetOverrides(presetName, presetsConfig) {
+  if (presetsConfig === undefined) {
+    if (presetName !== DEFAULT_PRESET) {
+      throw new Error(`Preset "${presetName}" was not found. Available presets: ${DEFAULT_PRESET}`);
+    }
+
+    return {};
   }
 
-  assertValidServerName(serverName);
-
-  const toolPolicy = parseToolPolicy(serverName, rule);
-  if (!toolPolicy) {
-    return;
+  if (presetName === DEFAULT_PRESET && !Object.hasOwn(presetsConfig, DEFAULT_PRESET)) {
+    return {};
   }
 
-  target.set(serverName, {
-    name: serverName,
-    toolPolicy,
-    presetEnabledOverride: getPresetEnabledOverride(rule),
-    serverConfig: undefined,
-  });
+  const presetConfig = presetsConfig[presetName];
+  if (presetConfig === undefined) {
+    const availablePresets = new Set(Object.keys(presetsConfig));
+    availablePresets.add(DEFAULT_PRESET);
+    throw new Error(
+      `Preset "${presetName}" was not found. Available presets: ${[...availablePresets].sort().join(", ") || "none"}`,
+    );
+  }
+
+  return getPlainObject(presetConfig, `Preset "${presetName}"`);
 }
 
-function getPresetEnabledOverride(rule) {
-  if (!rule || typeof rule !== "object" || Array.isArray(rule)) {
-    return undefined;
+function validatePresetOverrides(presetOverrides, serversConfig) {
+  for (const serverName of Object.keys(presetOverrides)) {
+    if (!Object.hasOwn(serversConfig, serverName)) {
+      throw new Error(`Preset override references unknown server "${serverName}".`);
+    }
   }
-
-  const ruleObject = getPlainObject(rule, "Preset rule");
-  return ruleObject.enabled === true ? true : undefined;
 }
 
 function parseServerConfig(serverName, config) {
@@ -236,7 +232,7 @@ function parseServerConfig(serverName, config) {
       description: typeof serverConfig.description === "string" ? serverConfig.description : undefined,
       command,
       environment: normalizeEnvironmentMap(serverConfig, serverName),
-      enabled: serverConfig.enabled,
+      enabled: serverConfig.enabled !== false,
       timeout: serverConfig.timeout,
       cwd: typeof serverConfig.cwd === "string" ? serverConfig.cwd : undefined,
       oauth: false,
@@ -254,7 +250,7 @@ function parseServerConfig(serverName, config) {
       description: typeof serverConfig.description === "string" ? serverConfig.description : undefined,
       url: serverConfig.url,
       headers: normalizeStringMap(serverConfig.headers, `Server "${serverName}" headers`),
-      enabled: serverConfig.enabled,
+      enabled: serverConfig.enabled !== false,
       timeout: serverConfig.timeout,
       oauth: normalizeOAuthConfig(serverConfig.oauth, serverName),
     };
@@ -394,54 +390,77 @@ function isValidJavaScriptIdentifier(value) {
   }
 }
 
-function parseToolPolicy(serverName, rule) {
+function parseToolPolicy(serverName, rule, enabledByDefault) {
+  if (rule === undefined) {
+    return enabledByDefault ? { mode: "all" } : null;
+  }
+
   if (rule === false) {
     return null;
   }
 
-  if (rule === true || rule === undefined || rule === null) {
+  if (rule === true || rule === null) {
     return { mode: "all" };
   }
 
   if (typeof rule === "string") {
-    return rule === "*" ? { mode: "all" } : { mode: "subset", tools: new Set([rule]) };
+    return {
+      mode: "subset",
+      selectors: [{ type: "exact", value: rule }],
+    };
   }
 
   if (Array.isArray(rule)) {
-    if (rule.includes("*")) {
-      return { mode: "all" };
-    }
-    return { mode: "subset", tools: new Set(rule.map(String)) };
-  }
-
-  const ruleObject = getPlainObject(rule, `Preset rule for server "${serverName}"`);
-
-  if (ruleObject.enabled === false) {
-    return null;
-  }
-
-  if (ruleObject.tools === undefined || ruleObject.tools === true) {
-    return { mode: "all" };
-  }
-
-  if (ruleObject.tools === "*" || ruleObject.tools === null) {
-    return { mode: "all" };
-  }
-
-  if (typeof ruleObject.tools === "string") {
-    return { mode: "subset", tools: new Set([ruleObject.tools]) };
-  }
-
-  if (Array.isArray(ruleObject.tools)) {
-    if (ruleObject.tools.includes("*")) {
-      return { mode: "all" };
-    }
-    return { mode: "subset", tools: new Set(ruleObject.tools.map(String)) };
+    return {
+      mode: "subset",
+      selectors: rule.map((selector, index) => parseToolSelector(serverName, selector, index)),
+    };
   }
 
   throw new Error(
-    `Preset rule for server "${serverName}" must use tools as "*" or an array of tool names.`,
+    `Preset rule for server "${serverName}" must be true, false, a tool name, or an array of tool selectors.`,
   );
+}
+
+function parseToolSelector(serverName, selector, index) {
+  if (typeof selector === "string") {
+    return { type: "exact", value: selector };
+  }
+
+  const selectorObject = getPlainObject(selector, `Tool selector ${index} for server "${serverName}"`);
+
+  if (typeof selectorObject.regex === "string") {
+    return {
+      type: "regex",
+      value: selectorObject.regex,
+      matcher: createToolRegex(selectorObject.regex, serverName),
+    };
+  }
+
+  if (typeof selectorObject.glob === "string") {
+    return {
+      type: "glob",
+      value: selectorObject.glob,
+      matcher: createToolGlob(selectorObject.glob),
+    };
+  }
+
+  throw new Error(
+    `Tool selector ${index} for server "${serverName}" must be a tool name string or an object with regex or glob.`,
+  );
+}
+
+function createToolRegex(pattern, serverName) {
+  try {
+    return new RegExp(pattern);
+  } catch (error) {
+    throw new Error(`Invalid regex preset selector for server "${serverName}": ${getErrorMessage(error)}`);
+  }
+}
+
+function createToolGlob(pattern) {
+  const escaped = pattern.replaceAll(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*");
+  return new RegExp(`^${escaped}$`);
 }
 
 export function getPlainObject(value, label) {

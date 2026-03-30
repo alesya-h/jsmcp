@@ -20,61 +20,6 @@ const tempConfigHome = await mkdtemp(path.join(os.tmpdir(), "jsmcp-"));
 
 try {
   await mkdir(path.join(tempConfigHome, "jsmcp"), { recursive: true });
-  await writeFile(
-    path.join(tempConfigHome, "jsmcp", "config.json"),
-    JSON.stringify(
-      {
-        servers: {
-          math: {
-            type: "stdio",
-            description: "Arithmetic test server",
-            command: "node",
-            args: [fixtureServerPath],
-            env: {
-              TEST_MCP_VALUE: "${SMOKE_TEST_VALUE:-env-ok}",
-            },
-            timeout: 5000,
-          },
-          broken: {
-            type: "stdio",
-            description: "Broken test server",
-            command: "node",
-            args: [brokenServerPath],
-            timeout: 5000,
-          },
-          hidden: {
-            type: "stdio",
-            description: "Hidden test server",
-            command: "node",
-            args: [fixtureServerPath],
-            enabled: false,
-            timeout: 5000,
-          },
-        },
-        presets: {
-          default: {
-            servers: {
-              math: {
-                tools: ["add", "repeat-text", "read-env"],
-              },
-              broken: true,
-              hidden: true,
-            },
-          },
-          "with-hidden-override": {
-            servers: {
-              hidden: {
-                enabled: true,
-                tools: ["add"],
-              },
-            },
-          },
-        },
-      },
-      null,
-      2,
-    ),
-  );
 
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([, value]) => typeof value === "string"),
@@ -82,20 +27,37 @@ try {
   env.XDG_CONFIG_HOME = tempConfigHome;
   env.SMOKE_TEST_VALUE = "env-ok";
 
-  const client = new Client({
-    name: "smoke-test",
-    version: "1.0.0",
-  });
-  const transport = new StdioClientTransport({
-    command: "node",
-    args: [metaServerPath],
-    env,
-    stderr: "inherit",
+  await writeConfig({
+    servers: {
+      math: {
+        type: "stdio",
+        description: "Arithmetic test server",
+        command: "node",
+        args: [fixtureServerPath],
+        env: {
+          TEST_MCP_VALUE: "${SMOKE_TEST_VALUE:-env-ok}",
+        },
+        timeout: 5000,
+      },
+      broken: {
+        type: "stdio",
+        description: "Broken test server",
+        command: "node",
+        args: [brokenServerPath],
+        timeout: 5000,
+      },
+      hidden: {
+        type: "stdio",
+        description: "Hidden test server",
+        command: "node",
+        args: [fixtureServerPath],
+        enabled: false,
+        timeout: 5000,
+      },
+    },
   });
 
-  try {
-    await client.connect(transport);
-
+  await withClient(env, undefined, async (client) => {
     const listResult = await client.callTool({ name: "list_servers", arguments: {} });
     assert.equal(listResult.isError, undefined);
     assert.equal(listResult.structuredContent.servers.length, 2);
@@ -116,7 +78,6 @@ try {
     assert.doesNotMatch(listResult.content[0].text, /Hidden test server/);
     assert.doesNotMatch(listResult.content[0].text, /repeat_text/);
     assert.doesNotMatch(listResult.content[0].text, /inputSchema/);
-    assert.doesNotMatch(listResult.content[0].text, /Preset:/);
 
     const toolListResult = await client.callTool({
       name: "list_tools",
@@ -124,11 +85,20 @@ try {
     });
     assert.equal(toolListResult.isError, undefined);
     assert.equal(toolListResult.structuredContent.server, "math");
-    assert.deepEqual(toolListResult.structuredContent.tools.map((tool) => tool.name), ["add", "read-env", "repeat-text"]);
-    assert.equal(toolListResult.structuredContent.tools[2].alias, "repeat_text");
-    assert.match(toolListResult.content[0].text, /inputSchema/);
-    assert.match(toolListResult.content[0].text, /repeat_text/);
-    assert.match(toolListResult.content[0].text, /"server": "math"/);
+    assert.deepEqual(
+      [...toolListResult.structuredContent.tools.map((tool) => tool.name)].sort(),
+      [
+        "ConfluenceFetch",
+        "IssueLookup",
+        "add",
+        "foobar_baz_one",
+        "foobar_baz_two",
+        "kagi_search_fetch",
+        "read-env",
+        "repeat",
+        "repeat-text",
+      ].sort(),
+    );
 
     const envResult = await client.callTool({
       name: "execute_code",
@@ -138,6 +108,89 @@ try {
     });
     assert.equal(envResult.isError, undefined);
     assert.deepEqual(envResult.structuredContent, { value: "env-ok" });
+  });
+
+  await writeConfig({
+    servers: {
+      math: {
+        type: "stdio",
+        description: "Arithmetic test server",
+        command: "node",
+        args: [fixtureServerPath],
+        env: {
+          TEST_MCP_VALUE: "${SMOKE_TEST_VALUE:-env-ok}",
+        },
+        timeout: 5000,
+      },
+      broken: {
+        type: "stdio",
+        description: "Broken test server",
+        command: "node",
+        args: [brokenServerPath],
+        timeout: 5000,
+      },
+      hidden: {
+        type: "stdio",
+        description: "Hidden test server",
+        command: "node",
+        args: [fixtureServerPath],
+        enabled: false,
+        timeout: 5000,
+      },
+    },
+    presets: {
+      default: {
+        math: [
+          "add",
+          "read-env",
+          "kagi_search_fetch",
+          { regex: "(Confluence|Issue)" },
+          { glob: "foobar_baz_*" },
+        ],
+        broken: true,
+      },
+      work: {
+        math: [
+          "add",
+          "read-env",
+          "kagi_search_fetch",
+          { regex: "(Confluence|Issue)" },
+          { glob: "foobar_baz_*" },
+        ],
+        broken: true,
+        hidden: true,
+      },
+    },
+  });
+
+  await withClient(env, undefined, async (client) => {
+    const listResult = await client.callTool({ name: "list_servers", arguments: {} });
+    assert.equal(listResult.structuredContent.servers.length, 2);
+    assert.deepEqual(
+      [...listResult.structuredContent.servers.map((server) => server.name)].sort(),
+      ["broken", "math"],
+    );
+
+    const toolListResult = await client.callTool({
+      name: "list_tools",
+      arguments: { server: "math" },
+    });
+    assert.equal(toolListResult.isError, undefined);
+    assert.deepEqual(
+      [...toolListResult.structuredContent.tools.map((tool) => tool.name)].sort(),
+      [
+        "ConfluenceFetch",
+        "IssueLookup",
+        "add",
+        "foobar_baz_one",
+        "foobar_baz_two",
+        "kagi_search_fetch",
+        "read-env",
+      ].sort(),
+    );
+    assert.match(toolListResult.content[0].text, /inputSchema/);
+    assert.match(toolListResult.content[0].text, /kagi_search_fetch/);
+    assert.match(toolListResult.content[0].text, /"server": "math"/);
 
     const executeResult = await client.callTool({
       name: "execute_code",
@@ -151,11 +204,11 @@ try {
     const aliasResult = await client.callTool({
       name: "execute_code",
       arguments: {
-        code: 'return await math.repeat_text({ text: "x", times: 3 });',
+        code: 'return await math.foobar_baz_one({});',
       },
     });
     assert.equal(aliasResult.isError, undefined);
-    assert.deepEqual(aliasResult.structuredContent, { value: "xxx" });
+    assert.deepEqual(aliasResult.structuredContent, { value: "foobar_baz_one" });
 
     const logResult = await client.callTool({
       name: "execute_code",
@@ -188,35 +241,39 @@ try {
 
     const emptyLogsResult = await client.callTool({ name: "fetch_logs", arguments: {} });
     assert.deepEqual(emptyLogsResult.structuredContent.logs, []);
-  } finally {
-    await client.close();
-  }
+  });
 
-  const overrideClient = new Client({
-    name: "smoke-test-override",
+  await withClient(env, "work", async (client) => {
+    const listResult = await client.callTool({ name: "list_servers", arguments: {} });
+    assert.deepEqual(
+      [...listResult.structuredContent.servers.map((server) => server.name)].sort(),
+      ["broken", "hidden", "math"],
+    );
+  });
+} finally {
+  await rm(tempConfigHome, { recursive: true, force: true });
+}
+
+async function writeConfig(config) {
+  await writeFile(path.join(tempConfigHome, "jsmcp", "config.json"), JSON.stringify(config, null, 2));
+}
+
+async function withClient(env, presetName, callback) {
+  const client = new Client({
+    name: "smoke-test",
     version: "1.0.0",
   });
-  const overrideTransport = new StdioClientTransport({
+  const transport = new StdioClientTransport({
     command: "node",
-    args: [metaServerPath, "with-hidden-override"],
+    args: presetName ? [metaServerPath, presetName] : [metaServerPath],
     env,
     stderr: "inherit",
   });
 
   try {
-    await overrideClient.connect(overrideTransport);
-
-    const overrideListResult = await overrideClient.callTool({ name: "list_servers", arguments: {} });
-    assert.deepEqual(overrideListResult.structuredContent.servers, [
-      {
-        name: "hidden",
-        description: "Hidden test server",
-        ok: true,
-      },
-    ]);
+    await client.connect(transport);
+    await callback(client);
   } finally {
-    await overrideClient.close();
+    await client.close();
   }
-} finally {
-  await rm(tempConfigHome, { recursive: true, force: true });
 }
