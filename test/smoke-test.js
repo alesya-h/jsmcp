@@ -13,6 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 const fixtureServerPath = path.join(projectRoot, "test", "fixtures", "arithmetic-server.js");
+const brokenServerPath = path.join(projectRoot, "test", "fixtures", "broken-server.js");
 const metaServerPath = path.join(projectRoot, "src", "index.js");
 
 const tempConfigHome = await mkdtemp(path.join(os.tmpdir(), "jsmcp-"));
@@ -34,6 +35,13 @@ try {
             },
             timeout: 5000,
           },
+          broken: {
+            type: "stdio",
+            description: "Broken test server",
+            command: "node",
+            args: [brokenServerPath],
+            timeout: 5000,
+          },
         },
         presets: {
           default: {
@@ -41,6 +49,7 @@ try {
               math: {
                 tools: ["add", "repeat-text", "read-env"],
               },
+              broken: true,
             },
           },
         },
@@ -72,17 +81,21 @@ try {
 
     const listResult = await client.callTool({ name: "list_servers", arguments: {} });
     assert.equal(listResult.isError, undefined);
-    assert.equal(listResult.structuredContent.servers.length, 1);
-    assert.equal(listResult.structuredContent.servers[0].name, "math");
-    assert.equal(listResult.structuredContent.servers[0].description, "Arithmetic test server");
-    assert.equal(listResult.structuredContent.servers[0].started, true);
-    assert.deepEqual(listResult.structuredContent.servers[0].allowedTools, ["add", "read-env", "repeat-text"]);
-    assert.deepEqual(
-      listResult.structuredContent.servers[0].availableTools.map((tool) => tool.name),
-      ["add", "read-env", "repeat-text"],
-    );
-    assert.equal(listResult.structuredContent.servers[0].availableTools[2].alias, "repeat_text");
+    assert.equal(listResult.structuredContent.servers.length, 2);
+    assert.deepEqual(listResult.structuredContent.servers[0], {
+      name: "math",
+      description: "Arithmetic test server",
+      ok: true,
+    });
+    assert.equal(listResult.structuredContent.servers[1].name, "broken");
+    assert.equal(listResult.structuredContent.servers[1].description, "Broken test server");
+    assert.match(listResult.structuredContent.servers[1].error.message, /Failed to start "broken"/);
     assert.match(listResult.content[0].text, /Arithmetic test server/);
+    assert.match(listResult.content[0].text, /ok: true/);
+    assert.match(listResult.content[0].text, /Broken test server/);
+    assert.match(listResult.content[0].text, /Failed to start/);
+    assert.doesNotMatch(listResult.content[0].text, /repeat_text/);
+    assert.doesNotMatch(listResult.content[0].text, /inputSchema/);
     assert.doesNotMatch(listResult.content[0].text, /Preset:/);
 
     const toolListResult = await client.callTool({
@@ -95,6 +108,7 @@ try {
     assert.equal(toolListResult.structuredContent.tools[2].alias, "repeat_text");
     assert.match(toolListResult.content[0].text, /inputSchema/);
     assert.match(toolListResult.content[0].text, /repeat_text/);
+    assert.match(toolListResult.content[0].text, /"server": "math"/);
 
     const envResult = await client.callTool({
       name: "execute_code",
@@ -135,6 +149,7 @@ try {
     assert.equal(fetchLogsResult.structuredContent.logs.length, 1);
     assert.equal(fetchLogsResult.structuredContent.logs[0].level, "log");
     assert.match(fetchLogsResult.structuredContent.logs[0].message, /hello/);
+    assert.match(fetchLogsResult.content[0].text, new RegExp(fetchLogsResult.structuredContent.logs[0].timestamp));
 
     const drainedLogsResult = await client.callTool({ name: "fetch_logs", arguments: {} });
     assert.deepEqual(drainedLogsResult.structuredContent.logs, []);

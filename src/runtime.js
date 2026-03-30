@@ -53,41 +53,22 @@ export class MetaMcpRuntime {
   }
 
   async listServers() {
-    return this.listServerSummaries();
+    return [...this.serverEntries.keys()].map((name) => {
+      const entry = this.requireServerEntry(name);
+      const error = this.startErrors.get(name);
+
+      return {
+        name,
+        description: entry.serverConfig.description,
+        ...(error ? { error: { message: error } } : { ok: true }),
+      };
+    });
   }
 
   async startAllServers() {
     await Promise.all(
       [...this.serverEntries.keys()].map((name) => this.ensureServerStarted(name).catch(() => null)),
     );
-  }
-
-  listServerSummaries() {
-    return [...this.serverEntries.keys()].map((name) => this.buildServerSummary(name));
-  }
-
-  buildServerSummary(name) {
-    const entry = this.requireServerEntry(name);
-    const started = this.startedServers.get(name);
-
-    return {
-      name,
-      description: entry.serverConfig.description,
-      type: entry.serverConfig.type,
-      enabled: entry.serverConfig.enabled !== false,
-      started: Boolean(started),
-      allowedTools: describeAllowedTools(entry.toolPolicy),
-      availableTools: started ? started.tools.map(sanitizeTool) : [],
-      missingAllowedTools: started ? [...started.missingAllowedTools] : [],
-      error: this.startErrors.get(name),
-      command:
-        entry.serverConfig.type === "local" ? [...entry.serverConfig.command] : undefined,
-      url: entry.serverConfig.type === "remote" ? entry.serverConfig.url : undefined,
-      timeoutMs:
-        typeof entry.serverConfig.timeout === "number"
-          ? entry.serverConfig.timeout
-          : getDiscoveryTimeout(entry.serverConfig),
-    };
   }
 
   async listTools(serverName) {
@@ -362,14 +343,6 @@ function createToolAlias(toolName) {
     return `_${alias}`;
   }
   return alias;
-}
-
-function describeAllowedTools(toolPolicy) {
-  if (toolPolicy.mode === "all") {
-    return "all";
-  }
-
-  return [...toolPolicy.tools].sort();
 }
 
 function isToolAllowed(toolPolicy, toolName) {

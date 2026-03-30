@@ -1,4 +1,5 @@
-export function renderServerListText(servers) {
+export function renderServerListText(structuredContent) {
+  const { servers } = structuredContent;
   const lines = [];
 
   for (const server of servers) {
@@ -7,20 +8,19 @@ export function renderServerListText(servers) {
     } else {
       lines.push(`- ${server.name}`);
     }
-    const allowedTools =
-      server.allowedTools === "all" ? "all tools" : server.allowedTools.join(", ") || "no tools";
-    const status = server.started ? "started" : "failed";
-    const details = server.availableTools.length
-      ? ` tools: ${server.availableTools.map((tool) => tool.name).join(", ")}`
-      : "";
-    const error = server.error ? ` error: ${server.error}` : "";
-    lines.push(`  type: ${server.type}; status: ${status}; allowed: ${allowedTools}${details}${error}`);
+
+    if (server.ok === true) {
+      lines.push("  ok: true");
+    } else if (server.error) {
+      lines.push(`  error: ${JSON.stringify(server.error)}`);
+    }
   }
 
   return lines.join("\n");
 }
 
-export function renderToolListText(serverName, tools) {
+export function renderToolListText(structuredContent) {
+  const { server: serverName, tools } = structuredContent;
   const lines = [`Server: ${serverName}`];
 
   for (const tool of tools) {
@@ -34,7 +34,7 @@ export function renderToolListText(serverName, tools) {
     }
   }
 
-  return lines.join("\n");
+  return withStructuredData(lines.join("\n"), structuredContent);
 }
 
 function formatSchemaText(schema) {
@@ -43,12 +43,14 @@ function formatSchemaText(schema) {
     .join(" ");
 }
 
-export function renderLogsText(logs) {
-  if (logs.length === 0) {
-    return "No logs.";
-  }
+export function renderLogsText(structuredContent) {
+  const { logs } = structuredContent;
+  const summary =
+    logs.length === 0
+      ? "No logs."
+      : logs.map((entry) => `${entry.id}. [${entry.level}] ${entry.message}`).join("\n");
 
-  return logs.map((entry) => `${entry.id}. [${entry.level}] ${entry.message}`).join("\n");
+  return withStructuredData(summary, structuredContent);
 }
 
 export function formatExecutionValue(value) {
@@ -57,4 +59,12 @@ export function formatExecutionValue(value) {
   }
 
   return JSON.stringify(value, null, 2);
+}
+
+function withStructuredData(summary, structuredData) {
+  return `${summary}\n\nStructured data:\n${JSON.stringify(structuredData, null, 2)}`;
+}
+
+export function renderClearLogsText(structuredContent) {
+  return withStructuredData(`Cleared ${structuredContent.cleared} log entries.`, structuredContent);
 }

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { DEFAULT_CODE_TIMEOUT_MS, SERVER_NAME, SERVER_VERSION } from "./constants.js";
 import {
   formatExecutionValue,
+  renderClearLogsText,
   renderLogsText,
   renderServerListText,
   renderToolListText,
@@ -25,11 +26,10 @@ export async function createMetaServer(runtime) {
     },
     async () => {
       const servers = await runtime.listServers();
+      const structuredContent = { servers };
       return {
-        content: [{ type: "text", text: renderServerListText(servers) }],
-        structuredContent: {
-          servers,
-        },
+        content: [{ type: "text", text: renderServerListText(structuredContent) }],
+        structuredContent,
       };
     },
   );
@@ -45,12 +45,13 @@ export async function createMetaServer(runtime) {
     },
     async ({ server: serverName }) => {
       const tools = await runtime.listTools(serverName);
+      const structuredContent = {
+        server: serverName,
+        tools,
+      };
       return {
-        content: [{ type: "text", text: renderToolListText(serverName, tools) }],
-        structuredContent: {
-          server: serverName,
-          tools,
-        },
+        content: [{ type: "text", text: renderToolListText(structuredContent) }],
+        structuredContent,
       };
     },
   );
@@ -95,9 +96,10 @@ export async function createMetaServer(runtime) {
     },
     async () => {
       const logs = runtime.fetchLogs();
+      const structuredContent = { logs };
       return {
-        content: [{ type: "text", text: renderLogsText(logs) }],
-        structuredContent: { logs },
+        content: [{ type: "text", text: renderLogsText(structuredContent) }],
+        structuredContent,
       };
     },
   );
@@ -110,9 +112,10 @@ export async function createMetaServer(runtime) {
     },
     async () => {
       const cleared = runtime.clearLogs();
+      const structuredContent = { cleared };
       return {
-        content: [{ type: "text", text: `Cleared ${cleared} log entries.` }],
-        structuredContent: { cleared },
+        content: [{ type: "text", text: renderClearLogsText(structuredContent) }],
+        structuredContent,
       };
     },
   );
