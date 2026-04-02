@@ -51,7 +51,7 @@ async function testYamlConfig() {
     });
     const transport = new StdioClientTransport({
       command: "node",
-      args: [metaServerPath],
+      args: [metaServerPath, "run"],
       env,
       stderr: "inherit",
     });
@@ -95,7 +95,7 @@ async function testDuplicateConfigsFail() {
     env.XDG_CONFIG_HOME = tempConfigHome;
 
     await assert.rejects(
-      execFileAsync("node", [metaServerPath], { env }),
+      execFileAsync("node", [metaServerPath, "run"], { env }),
       (error) => {
         assert.match(error.stderr, /Multiple config files found/);
         assert.match(error.stderr, /config\.json/);

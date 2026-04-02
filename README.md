@@ -45,15 +45,17 @@ npx @alesya_h/jsmcp
 ## Run
 
 ```bash
-jsmcp
-jsmcp work
+jsmcp run
+jsmcp run work
+jsmcp server work --port 3000
+jsmcp client --profile work --port 3000
 jsmcp auth
 jsmcp auth firefox_devtools
 ```
 
-If you are running from a source checkout instead of an installed package, replace `jsmcp` with `node src/index.js`.
+If you are running from a source checkout instead of an installed package, replace `jsmcp` with `node src/index.js`, for example `node src/index.js run`.
 
-When running the MCP server, the only optional argument is the preset name. If omitted, `default` is used.
+`run`, `server`, and `client` currently all start the MCP server. They accept an optional preset as either a positional argument or `--profile <name>`. They also accept `--port <number>` for the upcoming client/server split.
 
 Use `jsmcp auth` to manage OAuth for remote servers. With no arguments it lists remote servers that have OAuth enabled. With a server name it starts the OAuth flow for that server.
 

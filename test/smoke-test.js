@@ -57,7 +57,7 @@ try {
     },
   });
 
-  await withClient(env, undefined, async (client) => {
+  await withClient(env, {}, async (client) => {
     const listResult = await client.callTool({ name: "list_servers", arguments: {} });
     assert.equal(listResult.isError, undefined);
     assert.equal(listResult.structuredContent.servers.length, 2);
@@ -163,7 +163,7 @@ try {
     },
   });
 
-  await withClient(env, undefined, async (client) => {
+  await withClient(env, { command: "server", port: 43123 }, async (client) => {
     const listResult = await client.callTool({ name: "list_servers", arguments: {} });
     assert.equal(listResult.structuredContent.servers.length, 2);
     assert.deepEqual(
@@ -243,13 +243,17 @@ try {
     assert.deepEqual(emptyLogsResult.structuredContent.logs, []);
   });
 
-  await withClient(env, "work", async (client) => {
-    const listResult = await client.callTool({ name: "list_servers", arguments: {} });
-    assert.deepEqual(
-      [...listResult.structuredContent.servers.map((server) => server.name)].sort(),
-      ["broken", "hidden", "math"],
-    );
-  });
+  await withClient(
+    env,
+    { command: "client", presetName: "work", port: 43124, useProfileFlag: true },
+    async (client) => {
+      const listResult = await client.callTool({ name: "list_servers", arguments: {} });
+      assert.deepEqual(
+        [...listResult.structuredContent.servers.map((server) => server.name)].sort(),
+        ["broken", "hidden", "math"],
+      );
+    },
+  );
 } finally {
   await rm(tempConfigHome, { recursive: true, force: true });
 }
@@ -258,14 +262,21 @@ async function writeConfig(config) {
   await writeFile(path.join(tempConfigHome, "jsmcp", "config.json"), JSON.stringify(config, null, 2));
 }
 
-async function withClient(env, presetName, callback) {
+async function withClient(env, options, callback) {
+  const { command = "run", presetName, port, useProfileFlag = false } = options;
+  const profileArgs =
+    presetName === undefined
+      ? []
+      : useProfileFlag
+        ? ["--profile", presetName]
+        : [presetName];
   const client = new Client({
     name: "smoke-test",
     version: "1.0.0",
   });
   const transport = new StdioClientTransport({
     command: "node",
-    args: presetName ? [metaServerPath, presetName] : [metaServerPath],
+    args: [metaServerPath, command, ...profileArgs, ...(port ? ["--port", String(port)] : [])],
     env,
     stderr: "inherit",
   });
