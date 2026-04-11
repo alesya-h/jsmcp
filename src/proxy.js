@@ -113,17 +113,225 @@ export async function runProxyClient({ port, requestedProfile }) {
     wsUrl.searchParams.set("profile", requestedProfile);
   }
 
-  const localTransport = new StdioServerTransport();
-  const remoteTransport = new WebSocketClientTransport(wsUrl);
+  const proxyClient = new ReconnectingProxyClient(wsUrl);
+  await proxyClient.start();
+}
 
-  await bridgeTransports(localTransport, remoteTransport, {
-    onReady() {
-      console.error(`[${SERVER_NAME}] client connected to ${wsUrl}`);
-    },
-    onClose() {
-      process.stdin.pause();
-    },
-  });
+class ReconnectingProxyClient {
+  constructor(wsUrl) {
+    this.wsUrl = wsUrl;
+    this.localTransport = new StdioServerTransport();
+    this.remoteTransport = null;
+    this.localClosed = false;
+    this.closing = false;
+    this.pendingRequests = new Map();
+    this.restoreInitializeRequest = null;
+    this.restoreInitializedNotification = null;
+    this.connectPromise = null;
+    this.restorePromise = null;
+    this.restoreResolver = null;
+    this.restoreRejecter = null;
+    this.queue = Promise.resolve();
+    this.hasConnected = false;
+  }
+
+  async start() {
+    this.localTransport.onmessage = (message) => {
+      this.queue = this.queue
+        .then(() => this.handleLocalMessage(message))
+        .catch((error) => this.handleLocalMessageFailure(message, error));
+    };
+    this.localTransport.onerror = (error) => this.fail(error);
+    this.localTransport.onclose = () => {
+      this.localClosed = true;
+      void this.close();
+    };
+
+    process.stdin.on("end", () => {
+      this.localClosed = true;
+      void this.close();
+    });
+    process.stdin.on("close", () => {
+      this.localClosed = true;
+      void this.close();
+    });
+
+    await this.localTransport.start();
+    await this.ensureRemoteReady();
+    await new Promise(() => {});
+  }
+
+  async handleLocalMessageFailure(message, error) {
+    if (isRequest(message)) {
+      await this.localTransport.send(createRequestFailureResponse(message.id, classifyRequest(message), error));
+      return;
+    }
+
+    this.fail(error);
+  }
+
+  async handleLocalMessage(message) {
+    if (isInitializeRequest(message)) {
+      this.restoreInitializeRequest = message;
+    } else if (isInitializedNotification(message)) {
+      this.restoreInitializedNotification = message;
+    }
+
+    await this.ensureRemoteReady();
+
+    if (isRequest(message)) {
+      this.pendingRequests.set(message.id, classifyRequest(message));
+    }
+
+    try {
+      await this.remoteTransport.send(message);
+    } catch (error) {
+      if (isRequest(message)) {
+        this.pendingRequests.delete(message.id);
+      }
+      throw error;
+    }
+  }
+
+  async ensureRemoteReady() {
+    if (this.remoteTransport) {
+      return;
+    }
+
+    if (this.connectPromise) {
+      await this.connectPromise;
+      return;
+    }
+
+    this.connectPromise = this.connectRemote();
+
+    try {
+      await this.connectPromise;
+    } finally {
+      this.connectPromise = null;
+    }
+  }
+
+  async connectRemote() {
+    const transport = new WebSocketClientTransport(this.wsUrl);
+    transport.onmessage = (message) => {
+      void this.handleRemoteMessage(message).catch((error) => this.fail(error));
+    };
+    transport.onerror = (error) => {
+      if (!this.closing) {
+        console.error(`[${SERVER_NAME}] proxy client transport error: ${getErrorMessage(error)}`);
+      }
+    };
+    transport.onclose = () => {
+      this.handleRemoteClose();
+    };
+
+    await transport.start();
+    this.remoteTransport = transport;
+
+    if (!this.hasConnected) {
+      this.hasConnected = true;
+      console.error(`[${SERVER_NAME}] client connected to ${this.wsUrl}`);
+    } else {
+      console.error(`[${SERVER_NAME}] client reconnected to ${this.wsUrl}`);
+    }
+
+    if (this.restoreInitializeRequest) {
+      await this.restoreRemoteSession();
+    }
+  }
+
+  async restoreRemoteSession() {
+    if (!this.restoreInitializeRequest || !this.remoteTransport) {
+      return;
+    }
+
+    if (this.restorePromise) {
+      await this.restorePromise;
+      return;
+    }
+
+    this.restorePromise = new Promise((resolve, reject) => {
+      this.restoreResolver = resolve;
+      this.restoreRejecter = reject;
+    });
+
+    try {
+      await this.remoteTransport.send(this.restoreInitializeRequest);
+      await this.restorePromise;
+
+      if (this.restoreInitializedNotification) {
+        await this.remoteTransport.send(this.restoreInitializedNotification);
+      }
+    } finally {
+      this.restorePromise = null;
+      this.restoreResolver = null;
+      this.restoreRejecter = null;
+    }
+  }
+
+  async handleRemoteMessage(message) {
+    if (this.restoreInitializeRequest && isResponseForId(message, this.restoreInitializeRequest.id) && this.restorePromise) {
+      if (message.error) {
+        this.restoreRejecter?.(new Error(message.error.message || "Remote initialize failed during reconnect."));
+      } else {
+        this.restoreResolver?.();
+      }
+      return;
+    }
+
+    if (isResponse(message)) {
+      this.pendingRequests.delete(message.id);
+    }
+
+    await this.localTransport.send(message);
+  }
+
+  handleRemoteClose() {
+    const hadRemote = this.remoteTransport !== null;
+    this.remoteTransport = null;
+
+    if (!hadRemote || this.closing) {
+      return;
+    }
+
+    if (this.restoreRejecter) {
+      this.restoreRejecter(new Error("Disconnected while restoring MCP session."));
+    }
+
+    if (this.pendingRequests.size > 0) {
+      void this.failPendingRequests();
+    }
+  }
+
+  async failPendingRequests() {
+    const pending = [...this.pendingRequests.entries()];
+    this.pendingRequests.clear();
+
+    for (const [id, request] of pending) {
+      await this.localTransport.send(createDisconnectErrorResponse(id, request));
+    }
+  }
+
+  fail(error) {
+    if (this.closing) {
+      return;
+    }
+
+    console.error(`[${SERVER_NAME}] proxy client fatal error: ${getErrorMessage(error)}`);
+    void this.close();
+  }
+
+  async close() {
+    if (this.closing) {
+      return;
+    }
+
+    this.closing = true;
+    await Promise.allSettled([this.localTransport.close(), this.remoteTransport?.close()]);
+    process.stdin.pause();
+    process.exit(0);
+  }
 }
 
 class WebSocketServerTransport {
@@ -211,66 +419,60 @@ class WebSocketServerTransport {
   }
 }
 
-async function bridgeTransports(left, right, { onReady, onClose }) {
-  let closing = false;
-  let resolveFinished;
-  let rejectFinished;
-  const finished = new Promise((resolve, reject) => {
-    resolveFinished = resolve;
-    rejectFinished = reject;
-  });
+function isRequest(message) {
+  return message && typeof message.method === "string" && Object.hasOwn(message, "id");
+}
 
-  const closeBoth = async () => {
-    if (closing) {
-      return;
-    }
+function isResponse(message) {
+  return message && Object.hasOwn(message, "id") && (Object.hasOwn(message, "result") || Object.hasOwn(message, "error"));
+}
 
-    closing = true;
-    await Promise.allSettled([left.close(), right.close()]);
-    onClose?.();
-    resolveFinished();
-  };
+function isInitializeRequest(message) {
+  return isRequest(message) && message.method === "initialize";
+}
 
-  const fail = (error) => {
-    if (closing) {
-      return;
-    }
+function isInitializedNotification(message) {
+  return message && typeof message.method === "string" && !Object.hasOwn(message, "id") && message.method === "notifications/initialized";
+}
 
-    rejectFinished(error instanceof Error ? error : new Error(String(error)));
-    void closeBoth();
-  };
+function isResponseForId(message, id) {
+  return isResponse(message) && message.id === id;
+}
 
-  left.onmessage = (message) => {
-    void right.send(message).catch(fail);
-  };
-  right.onmessage = (message) => {
-    void left.send(message).catch(fail);
-  };
-  left.onerror = fail;
-  right.onerror = fail;
-  left.onclose = () => {
-    void closeBoth();
-  };
-  right.onclose = () => {
-    void closeBoth();
-  };
-
-  process.stdin.on("end", () => {
-    void closeBoth();
-  });
-  process.stdin.on("close", () => {
-    void closeBoth();
-  });
-
-  try {
-    await right.start();
-    await left.start();
-    onReady?.();
-  } catch (error) {
-    fail(error);
+function classifyRequest(message) {
+  if (message.method === "tools/call" && message.params?.name === "execute_code") {
+    return { kind: "execute_code" };
   }
 
-  await finished;
+  return { kind: "generic", method: message.method };
+}
+
+function createDisconnectErrorResponse(id, request) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    error: {
+      code: -32001,
+      message:
+        request.kind === "execute_code"
+          ? "The jsmcp daemon disconnected while execute_code was running. The MCP session was re-established, but this specific call failed. If the code might have changed external state, inspect the current state before deciding how to retry; do not assume the operation either fully succeeded or fully failed."
+          : `The jsmcp daemon disconnected while handling this request${request.method ? ` (${request.method})` : ""}. The MCP session will reconnect on the next call, but this request failed and may need to be retried.`,
+    },
+  };
+}
+
+function createRequestFailureResponse(id, request, error) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    error: {
+      code: -32002,
+      message:
+        request.kind === "execute_code"
+          ? `execute_code could not be sent to the jsmcp daemon: ${getErrorMessage(error)} If the earlier attempt may have changed external state, inspect the current state before deciding how to retry.`
+          : `Failed to reach the jsmcp daemon for this request: ${getErrorMessage(error)}`,
+    },
+  };
 }
 
 function rejectUpgrade(socket, statusCode, message) {

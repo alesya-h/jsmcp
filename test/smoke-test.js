@@ -268,6 +268,62 @@ try {
       },
     );
   });
+
+  const reconnectPort = await getAvailablePort();
+  const daemon = await startDaemon(env, { presetName: "work", port: reconnectPort });
+
+  try {
+    await withClient(
+      env,
+      { command: "client", presetName: "work", port: reconnectPort, useProfileFlag: true },
+      async (client) => {
+        const firstResult = await client.callTool({ name: "list_servers", arguments: {} });
+        assert.deepEqual(
+          [...firstResult.structuredContent.servers.map((server) => server.name)].sort(),
+          ["broken", "hidden", "math"],
+        );
+
+        await daemon.restart();
+
+        const secondResult = await client.callTool({ name: "list_servers", arguments: {} });
+        assert.deepEqual(
+          [...secondResult.structuredContent.servers.map((server) => server.name)].sort(),
+          ["broken", "hidden", "math"],
+        );
+      },
+    );
+
+    await withClient(
+      env,
+      { command: "client", presetName: "work", port: reconnectPort, useProfileFlag: true },
+      async (client) => {
+        const pendingCall = client.callTool({
+          name: "execute_code",
+          arguments: {
+            code: 'await new Promise((resolve) => setTimeout(resolve, 5000)); return await math.add({ a: 1, b: 2 });',
+          },
+        });
+        pendingCall.catch(() => null);
+
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await daemon.restart();
+
+        await assert.rejects(pendingCall, (error) => {
+          assert.match(error.message, /daemon disconnected while execute_code was running/);
+          assert.match(error.message, /inspect the current state before deciding how to retry/);
+          return true;
+        });
+
+        const afterReconnect = await client.callTool({ name: "list_servers", arguments: {} });
+        assert.deepEqual(
+          [...afterReconnect.structuredContent.servers.map((server) => server.name)].sort(),
+          ["broken", "hidden", "math"],
+        );
+      },
+    );
+  } finally {
+    await daemon.stop();
+  }
 } finally {
   await rm(tempConfigHome, { recursive: true, force: true });
 }
@@ -304,6 +360,16 @@ async function withClient(env, options, callback) {
 }
 
 async function withDaemon(env, options, callback) {
+  const daemon = await startDaemon(env, options);
+
+  try {
+    await callback();
+  } finally {
+    await daemon.stop();
+  }
+}
+
+async function startDaemon(env, options) {
   const { presetName, port, useProfileFlag = false } = options;
   const profileArgs =
     presetName === undefined
@@ -311,20 +377,31 @@ async function withDaemon(env, options, callback) {
       : useProfileFlag
         ? ["--profile", presetName]
         : [presetName];
-  const child = spawn("node", [metaServerPath, "server", ...profileArgs, "--port", String(port)], {
+  const readyText = `server listening on ws://127.0.0.1:${port}/mcp`;
+  let child = spawn("node", [metaServerPath, "server", ...profileArgs, "--port", String(port)], {
     env,
     stdio: ["ignore", "ignore", "pipe"],
   });
-  const readyText = `server listening on ws://127.0.0.1:${port}/mcp`;
-  const exitPromise = once(child, "exit");
+  let exitPromise = once(child, "exit");
 
-  try {
-    await waitForDaemonReady(child, readyText);
-    await callback();
-  } finally {
-    child.kill("SIGTERM");
-    await exitPromise.catch(() => null);
-  }
+  await waitForDaemonReady(child, readyText);
+
+  return {
+    async restart() {
+      child.kill("SIGTERM");
+      await exitPromise.catch(() => null);
+      child = spawn("node", [metaServerPath, "server", ...profileArgs, "--port", String(port)], {
+        env,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      exitPromise = once(child, "exit");
+      await waitForDaemonReady(child, readyText);
+    },
+    async stop() {
+      child.kill("SIGTERM");
+      await exitPromise.catch(() => null);
+    },
+  };
 }
 
 async function waitForDaemonReady(child, readyText) {
