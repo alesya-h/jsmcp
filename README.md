@@ -231,8 +231,8 @@ OAuth tokens and registration state are stored in `$XDG_DATA_HOME/jsmcp/oauth.js
 - `list_servers()` is the required first step so the agent can learn what capabilities are available
 - you must call `list_tools(server)` before using a server in `execute_code()` so you know the exact tool names, aliases, and schemas
 - `list_tools(server)` returns only the tools allowed for that server in the preset
-- `execute_code(code)` does not manage server lifecycle; it can only use servers that are already started
-- prefer `execute_code(code)` whenever the work would require more than a single tool call
+- `execute_code({ code, data?, timeoutMs? })` does not manage server lifecycle; it can only use servers that are already started
+- prefer `execute_code({ code, ... })` whenever the work would require more than a single tool call
 - `console.log`, `console.info`, `console.warn`, and `console.error` inside `execute_code()` are stored for `fetch_logs()`
 - `fetch_logs()` drains the log buffer on read
 
@@ -242,12 +242,20 @@ OAuth tokens and registration state are stored in `$XDG_DATA_HOME/jsmcp/oauth.js
 
 Started servers are injected as globals. Each allowed MCP tool becomes a function on that server object. Prefer underscore aliases when available.
 
+If you pass `data`, it is exposed to the script as the global variable `data`. This is useful for strings or structured values that would otherwise need escaping inside the code string.
+
 You should call `list_tools(server)` before using a server in `execute_code()`. For multi-step work, prefer writing JavaScript instead of trying to mentally chain several tool calls.
 
 Example:
 
 ```js
 return await math.add({ a: 2, b: 5 });
+```
+
+With data:
+
+```js
+return data.message;
 ```
 
 If the MCP tool returns `structuredContent`, that is what the JavaScript call resolves to. So the example above can return:

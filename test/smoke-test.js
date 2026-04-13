@@ -111,6 +111,16 @@ try {
     });
     assert.equal(envResult.isError, undefined);
     assert.deepEqual(envResult.structuredContent, { value: "env-ok" });
+
+    const dataResult = await client.callTool({
+      name: "execute_code",
+      arguments: {
+        data: { value: 'hello "quoted" world' },
+        code: "return data.value;",
+      },
+    });
+    assert.equal(dataResult.isError, undefined);
+    assert.deepEqual(dataResult.structuredContent, { value: 'hello "quoted" world' });
   });
 
   await writeConfig({

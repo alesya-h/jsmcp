@@ -145,12 +145,12 @@ export class MetaMcpRuntime {
     }
   }
 
-  async executeCode(code, timeoutMs, sessionId) {
+  async executeCode(code, timeoutMs, sessionId, data) {
     if (this.startedServers.size === 0) {
       throw new Error("No servers are started. Call list_servers first.");
     }
 
-    const contextValues = this.buildSandboxContext(sessionId);
+    const contextValues = this.buildSandboxContext(sessionId, data);
     const context = vm.createContext(contextValues);
     context.globalThis = context;
 
@@ -163,9 +163,10 @@ export class MetaMcpRuntime {
     return toJsonSafe(result);
   }
 
-  buildSandboxContext(sessionId) {
+  buildSandboxContext(sessionId, data) {
     const context = {
       console: createCapturedConsole(this, sessionId),
+      data: toJsonSafe(data),
       URL,
       TextEncoder,
       TextDecoder,
