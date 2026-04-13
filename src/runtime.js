@@ -154,7 +154,7 @@ export class MetaMcpRuntime {
     const context = vm.createContext(contextValues);
     context.globalThis = context;
 
-    const script = new vm.Script(`(async () => {\n${code}\n})()`, {
+    const script = new vm.Script(`(async () => {\n"use strict";\n${code}\n})()`, {
       filename: "execute_code.js",
     });
 
