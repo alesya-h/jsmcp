@@ -3,7 +3,14 @@ import process from "node:process";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { handleAuthCommand } from "./auth.js";
-import { DEFAULT_PRESET, DEFAULT_PROXY_PORT, SERVER_NAME, SESSION_ID_PATTERN } from "./constants.js";
+import {
+  DEFAULT_BIND_HOST,
+  DEFAULT_CLIENT_HOST,
+  DEFAULT_PRESET,
+  DEFAULT_PROXY_PORT,
+  SERVER_NAME,
+  SESSION_ID_PATTERN,
+} from "./constants.js";
 import { createMetaServer } from "./meta-server.js";
 import { runProxyClient, runProxyServer } from "./proxy.js";
 import { MetaMcpRuntime } from "./runtime.js";
@@ -35,11 +42,12 @@ export async function main() {
   }
 
   if (command === "server") {
-    await runProxyServer({ presetName: options.presetName, port: options.port });
+    await runProxyServer({ presetName: options.presetName, port: options.port, bindHost: options.bindHost });
     return;
   }
 
   await runProxyClient({
+    host: options.host,
     port: options.port,
     requestedProfile: options.profileProvided ? options.presetName : undefined,
     sessionId: options.sessionId,
@@ -79,6 +87,8 @@ function parseRunCommandArgs(command, args) {
   let profileProvided = false;
   let port = DEFAULT_PROXY_PORT;
   let sessionId;
+  let bindHost = DEFAULT_BIND_HOST;
+  let host = DEFAULT_CLIENT_HOST;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -93,6 +103,36 @@ function parseRunCommandArgs(command, args) {
       }
       presetName = value;
       profileProvided = true;
+      index += 1;
+      continue;
+    }
+
+    if (argument === "--bind") {
+      if (command !== "server") {
+        throw new Error(`--bind is only valid for the server command.\n${getRunUsage(command)}`);
+      }
+
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error(`Missing value for --bind.\n${getRunUsage(command)}`);
+      }
+
+      bindHost = value;
+      index += 1;
+      continue;
+    }
+
+    if (argument === "--host") {
+      if (command !== "client") {
+        throw new Error(`--host is only valid for the client command.\n${getRunUsage(command)}`);
+      }
+
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error(`Missing value for --host.\n${getRunUsage(command)}`);
+      }
+
+      host = value;
       index += 1;
       continue;
     }
@@ -145,7 +185,7 @@ function parseRunCommandArgs(command, args) {
     profileProvided = true;
   }
 
-  return { port, presetName, profileProvided, sessionId };
+  return { bindHost, host, port, presetName, profileProvided, sessionId };
 }
 
 function getMainUsage() {
@@ -153,11 +193,13 @@ function getMainUsage() {
     `Usage: ${SERVER_NAME} <command> [options]`,
     `Commands: auth, run, server, client`,
     `Run commands accept [profile] [--profile <name>] [--port <number>]`,
-    `Client also accepts [--session-id <id>]`,
+    `Server also accepts [--bind <host>]`,
+    `Client also accepts [--host <host>] [--session-id <id>]`,
   ].join("\n");
 }
 
 function getRunUsage(command) {
-  const sessionIdUsage = command === "client" ? " [--session-id <id>]" : "";
-  return `Usage: ${SERVER_NAME} ${command} [profile] [--profile <name>] [--port <number>]${sessionIdUsage}`;
+  const bindUsage = command === "server" ? " [--bind <host>]" : "";
+  const clientUsage = command === "client" ? " [--host <host>] [--session-id <id>]" : "";
+  return `Usage: ${SERVER_NAME} ${command} [profile] [--profile <name>] [--port <number>]${bindUsage}${clientUsage}`;
 }

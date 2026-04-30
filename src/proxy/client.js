@@ -1,11 +1,12 @@
 import process from "node:process";
 import { randomUUID } from "node:crypto";
 
-import { WebSocketClientTransport } from "@modelcontextprotocol/sdk/client/websocket.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { DEFAULT_PROXY_PATH, SERVER_NAME } from "../constants.js";
+import { loadApiKey } from "../api-key.js";
+import { DEFAULT_CLIENT_HOST, DEFAULT_PROXY_PATH, SERVER_NAME } from "../constants.js";
 import { getErrorMessage } from "../utils.js";
+import { WebSocketClientTransport } from "./websocket-client-transport.js";
 import {
   classifyRequest,
   cloneMessage,
@@ -22,20 +23,26 @@ import {
   isResponseForId,
 } from "./messages.js";
 
-export async function runProxyClient({ port, requestedProfile, sessionId }) {
-  const wsUrl = new URL(`ws://127.0.0.1:${port}${DEFAULT_PROXY_PATH}`);
+export async function runProxyClient({ host = DEFAULT_CLIENT_HOST, port, requestedProfile, sessionId }) {
+  const apiKey = await loadApiKey();
+  const wsUrl = new URL(`ws://${formatHostForUrl(host)}:${port}${DEFAULT_PROXY_PATH}`);
   if (requestedProfile) {
     wsUrl.searchParams.set("profile", requestedProfile);
   }
   wsUrl.searchParams.set("sessionId", sessionId ?? randomUUID());
 
-  const proxyClient = new ReconnectingProxyClient(wsUrl);
+  const proxyClient = new ReconnectingProxyClient(wsUrl, apiKey);
   await proxyClient.start();
 }
 
+function formatHostForUrl(host) {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
 class ReconnectingProxyClient {
-  constructor(wsUrl) {
+  constructor(wsUrl, apiKey) {
     this.wsUrl = wsUrl;
+    this.apiKey = apiKey;
     this.localTransport = new StdioServerTransport();
     this.remoteTransport = null;
     this.localClosed = false;
@@ -142,7 +149,7 @@ class ReconnectingProxyClient {
   }
 
   async connectRemote() {
-    const transport = new WebSocketClientTransport(this.wsUrl);
+    const transport = new WebSocketClientTransport(this.wsUrl, this.apiKey);
     transport.onmessage = (message) => {
       void this.handleRemoteMessage(message).catch((error) => this.fail(error));
     };

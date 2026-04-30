@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -301,6 +301,40 @@ try {
         assert.match(logsResult.structuredContent.logs[0].message, /persisted reconnect log/);
       },
     );
+
+    const apiKey = (await readFile(path.join(tempConfigHome, "jsmcp", "api-key.txt"), "utf8")).trim();
+    const unauthorizedRestResult = await fetch(`http://127.0.0.1:${proxyPort}/api/call?tool=list_servers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(unauthorizedRestResult.status, 401);
+
+    const wrongProfileRestResult = await fetch(`http://127.0.0.1:${proxyPort}/api/call?tool=list_servers&profile=default`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-JSMCP-API-Key": apiKey,
+      },
+      body: "{}",
+    });
+    assert.equal(wrongProfileRestResult.status, 409);
+
+    const restSessionId = `smoke-rest-${proxyPort}`;
+    const restListResult = await postApi(proxyPort, apiKey, "list_servers", undefined, "work", {});
+    assert.deepEqual(
+      [...restListResult.structuredContent.servers.map((server) => server.name)].sort(),
+      ["broken", "hidden", "math"],
+    );
+
+    const restExecuteResult = await postApi(proxyPort, apiKey, "execute_code", restSessionId, "work", {
+      code: 'console.log("rest log"); return await math.add({ a: 6, b: 7 });',
+    });
+    assert.deepEqual(restExecuteResult.structuredContent, { sum: 13 });
+
+    const restLogsResult = await postApi(proxyPort, apiKey, "fetch_logs", restSessionId, "work", {});
+    assert.equal(restLogsResult.structuredContent.logs.length, 1);
+    assert.match(restLogsResult.structuredContent.logs[0].message, /rest log/);
   });
 
   const reconnectPort = await getAvailablePort();
@@ -503,7 +537,7 @@ async function startDaemon(env, options) {
       : useProfileFlag
         ? ["--profile", presetName]
         : [presetName];
-  const readyText = `server listening on ws://127.0.0.1:${port}/mcp`;
+  const readyText = `server listening on ws://0.0.0.0:${port}/mcp`;
   let child = spawn("node", [metaServerPath, "server", ...profileArgs, "--port", String(port)], {
     env,
     stdio: ["ignore", "ignore", "pipe"],
@@ -528,6 +562,29 @@ async function startDaemon(env, options) {
       await exitPromise.catch(() => null);
     },
   };
+}
+
+async function postApi(port, apiKey, toolName, sessionId, profile, body) {
+  const url = new URL(`http://127.0.0.1:${port}/api/call`);
+  url.searchParams.set("tool", toolName);
+  if (sessionId) {
+    url.searchParams.set("sessionId", sessionId);
+  }
+  if (profile) {
+    url.searchParams.set("profile", profile);
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-JSMCP-API-Key": apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  assert.equal(response.status, 200);
+  return await response.json();
 }
 
 async function waitForDaemonReady(child, readyText) {

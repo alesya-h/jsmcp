@@ -11,9 +11,13 @@ import { getErrorMessage } from "./utils.js";
 
 const CONFIG_FILE_NAMES = ["config.json", "config.yaml", "config.yml"];
 
-function resolveConfigDirectory() {
+export function resolveConfigDirectory() {
   const configHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
   return path.join(configHome, SERVER_NAME);
+}
+
+export function resolveApiKeyPath() {
+  return path.join(resolveConfigDirectory(), "api-key.txt");
 }
 
 export async function resolveConfigPath() {
