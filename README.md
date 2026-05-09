@@ -139,12 +139,14 @@ For local / stdio servers:
 - `env`: optional object of environment variables
 - `environment`: optional object of environment variables; merged with `env`, and wins on duplicate keys
 - `cwd`: optional working directory
+- `strip_tool_prefix`: optional non-empty string removed from exposed tool names when upstream tools all share a prefix
 
 For remote / HTTP / SSE servers:
 
 - `url`: required string
 - `headers`: optional object of request headers
 - `oauth`: optional OAuth config
+- `strip_tool_prefix`: optional non-empty string removed from exposed tool names when upstream tools all share a prefix
 
 Supported `oauth` forms:
 
@@ -174,6 +176,8 @@ If `presets` is present, it is an object of preset names. Each preset is an obje
 
 - `presets.default`: optional overrides for the default preset
 - any other preset name, such as `presets.work`: additional named preset overrides
+
+If a server uses `strip_tool_prefix`, preset tool selectors match the stripped tool names that agents see.
 
 Within a preset, server rules work like this:
 

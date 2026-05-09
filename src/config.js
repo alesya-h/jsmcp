@@ -239,6 +239,7 @@ function parseServerConfig(serverName, config) {
       enabled: serverConfig.enabled !== false,
       timeout: serverConfig.timeout,
       cwd: typeof serverConfig.cwd === "string" ? serverConfig.cwd : undefined,
+      stripToolPrefix: normalizeStripToolPrefix(serverConfig.strip_tool_prefix, serverName),
       oauth: false,
     };
   }
@@ -256,6 +257,7 @@ function parseServerConfig(serverName, config) {
       headers: normalizeStringMap(serverConfig.headers, `Server "${serverName}" headers`),
       enabled: serverConfig.enabled !== false,
       timeout: serverConfig.timeout,
+      stripToolPrefix: normalizeStripToolPrefix(serverConfig.strip_tool_prefix, serverName),
       oauth: normalizeOAuthConfig(serverConfig.oauth, serverName),
     };
   }
@@ -263,6 +265,18 @@ function parseServerConfig(serverName, config) {
   throw new Error(
     `Server "${serverName}" must have type "local", "stdio", "remote", "http", or "sse", got ${inspect(serverConfig.type)}.`,
   );
+}
+
+function normalizeStripToolPrefix(value, serverName) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Server "${serverName}" strip_tool_prefix must be a non-empty string when provided.`);
+  }
+
+  return value;
 }
 
 function normalizeServerType(type, serverName) {

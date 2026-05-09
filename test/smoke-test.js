@@ -18,6 +18,7 @@ const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 const fixtureServerPath = path.join(projectRoot, "test", "fixtures", "arithmetic-server.js");
 const brokenServerPath = path.join(projectRoot, "test", "fixtures", "broken-server.js");
+const prefixedServerPath = path.join(projectRoot, "test", "fixtures", "prefixed-server.js");
 const metaServerPath = path.join(projectRoot, "src", "index.js");
 const execFileAsync = promisify(execFile);
 
@@ -152,6 +153,14 @@ try {
         enabled: false,
         timeout: 5000,
       },
+      prefixed: {
+        type: "stdio",
+        description: "Prefixed test server",
+        command: "node",
+        args: [prefixedServerPath],
+        strip_tool_prefix: "tool__",
+        timeout: 5000,
+      },
     },
     presets: {
       default: {
@@ -163,6 +172,7 @@ try {
           { glob: "foobar_baz_*" },
         ],
         broken: true,
+        prefixed: "read-value",
       },
       work: {
         math: [
@@ -174,16 +184,17 @@ try {
         ],
         broken: true,
         hidden: true,
+        prefixed: "read-value",
       },
     },
   });
 
   await withClient(env, { command: "run" }, async (client) => {
     const listResult = await client.callTool({ name: "list_servers", arguments: {} });
-    assert.equal(listResult.structuredContent.servers.length, 2);
+    assert.equal(listResult.structuredContent.servers.length, 3);
     assert.deepEqual(
       [...listResult.structuredContent.servers.map((server) => server.name)].sort(),
-      ["broken", "math"],
+      ["broken", "math", "prefixed"],
     );
 
     const toolListResult = await client.callTool({
@@ -206,6 +217,22 @@ try {
     assert.match(toolListResult.content[0].text, /inputSchema/);
     assert.match(toolListResult.content[0].text, /kagi_search_fetch/);
     assert.match(toolListResult.content[0].text, /"server": "math"/);
+
+    const prefixedToolListResult = await client.callTool({
+      name: "list_tools",
+      arguments: { server: "prefixed" },
+    });
+    assert.deepEqual(prefixedToolListResult.structuredContent.tools.map((tool) => tool.name), ["read-value"]);
+    assert.equal(prefixedToolListResult.structuredContent.tools[0].alias, "read_value");
+    assert.doesNotMatch(prefixedToolListResult.content[0].text, /tool__read-value/);
+
+    const prefixedExecuteResult = await client.callTool({
+      name: "execute_code",
+      arguments: {
+        code: "return await prefixed.read_value({});",
+      },
+    });
+    assert.deepEqual(prefixedExecuteResult.structuredContent, { value: "read-value" });
 
     const executeResult = await client.callTool({
       name: "execute_code",
@@ -267,7 +294,7 @@ try {
         const listResult = await client.callTool({ name: "list_servers", arguments: {} });
         assert.deepEqual(
           [...listResult.structuredContent.servers.map((server) => server.name)].sort(),
-          ["broken", "hidden", "math"],
+          ["broken", "hidden", "math", "prefixed"],
         );
 
         const executeResult = await client.callTool({
@@ -326,7 +353,7 @@ try {
     const restListResult = await postApi(proxyPort, apiKey, "list_servers", undefined, "work", {});
     assert.deepEqual(
       [...restListResult.structuredContent.servers.map((server) => server.name)].sort(),
-      ["broken", "hidden", "math"],
+      ["broken", "hidden", "math", "prefixed"],
     );
 
     const restExecuteResult = await postApi(proxyPort, apiKey, "execute_code", restSessionId, "work", {
@@ -361,7 +388,7 @@ try {
         const firstResult = await client.callTool({ name: "list_servers", arguments: {} });
         assert.deepEqual(
           [...firstResult.structuredContent.servers.map((server) => server.name)].sort(),
-          ["broken", "hidden", "math"],
+          ["broken", "hidden", "math", "prefixed"],
         );
 
         await daemon.restart();
@@ -369,7 +396,7 @@ try {
         const secondResult = await client.callTool({ name: "list_servers", arguments: {} });
         assert.deepEqual(
           [...secondResult.structuredContent.servers.map((server) => server.name)].sort(),
-          ["broken", "hidden", "math"],
+          ["broken", "hidden", "math", "prefixed"],
         );
       },
     );
@@ -401,6 +428,14 @@ try {
           enabled: false,
           timeout: 5000,
         },
+        prefixed: {
+          type: "stdio",
+          description: "Prefixed test server",
+          command: "node",
+          args: [prefixedServerPath],
+          strip_tool_prefix: "tool__",
+          timeout: 5000,
+        },
       },
       presets: {
         default: {
@@ -412,6 +447,7 @@ try {
             { glob: "foobar_baz_*" },
           ],
           broken: true,
+          prefixed: "read-value",
         },
         work: {
           math: [
@@ -424,6 +460,7 @@ try {
           ],
           broken: true,
           hidden: true,
+          prefixed: ["read-value", "repeat-text"],
         },
       },
     });
@@ -489,7 +526,7 @@ try {
         const afterReconnect = await client.callTool({ name: "list_servers", arguments: {} });
         assert.deepEqual(
           [...afterReconnect.structuredContent.servers.map((server) => server.name)].sort(),
-          ["broken", "hidden", "math"],
+          ["broken", "hidden", "math", "prefixed"],
         );
       },
     );

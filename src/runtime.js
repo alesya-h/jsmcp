@@ -132,7 +132,10 @@ export class MetaMcpRuntime {
         timeout: getDiscoveryTimeout(entry.serverConfig),
       });
 
-      startedServer.tools = filterTools(listToolsResult.tools, entry.toolPolicy);
+      startedServer.tools = filterTools(
+        normalizeToolNames(name, listToolsResult.tools, entry.serverConfig.stripToolPrefix),
+        entry.toolPolicy,
+      );
 
       this.startErrors.delete(name);
       this.startedServers.set(name, startedServer);
@@ -218,7 +221,7 @@ export class MetaMcpRuntime {
     }
 
     const result = await started.client.callTool(
-      { name: toolName, arguments: args },
+      { name: tool.originalName ?? toolName, arguments: args },
       undefined,
       requestOptions,
     );
@@ -362,6 +365,34 @@ function buildStartError(serverName, error, stderr) {
   }
 
   return startError;
+}
+
+function normalizeToolNames(serverName, tools, stripToolPrefix) {
+  const normalizedTools = tools.map((tool) => {
+    const name = stripToolName(tool.name, stripToolPrefix);
+    return name === tool.name ? tool : { ...tool, name, originalName: tool.name };
+  });
+  const names = new Set();
+
+  for (const tool of normalizedTools) {
+    if (!tool.name) {
+      throw new Error(`Server "${serverName}" produced an empty tool name after strip_tool_prefix.`);
+    }
+    if (names.has(tool.name)) {
+      throw new Error(`Server "${serverName}" has duplicate tool name "${tool.name}" after strip_tool_prefix.`);
+    }
+    names.add(tool.name);
+  }
+
+  return normalizedTools;
+}
+
+function stripToolName(toolName, stripToolPrefix) {
+  if (!stripToolPrefix || !toolName.startsWith(stripToolPrefix)) {
+    return toolName;
+  }
+
+  return toolName.slice(stripToolPrefix.length);
 }
 
 function filterTools(tools, toolPolicy) {
