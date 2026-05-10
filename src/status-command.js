@@ -1,12 +1,50 @@
 import { loadApiKey } from "./api-key.js";
 import { API_KEY_HEADER, DEFAULT_CLIENT_HOST, DEFAULT_PRESET, DEFAULT_PROXY_PORT, SERVER_NAME } from "./constants.js";
-import { getErrorMessage } from "./utils.js";
 
 export async function handleStatusCommand(args) {
   const options = parseStatusArgs(args);
   const apiKey = await loadApiKey();
+  const serversBody = await callApiTool(options, apiKey, "list_servers", {});
+
+  if (!Array.isArray(serversBody.structuredContent?.servers)) {
+    console.log(JSON.stringify(serversBody.structuredContent ?? serversBody, null, 2));
+    return;
+  }
+
+  const servers = serversBody.structuredContent.servers;
+  if (options.serverName) {
+    const server = servers.find((item) => item.name === options.serverName);
+    if (!server) {
+      throw new Error(`Server "${options.serverName}" was not found.`);
+    }
+
+    if (options.showTools && server.ok === true) {
+      const tools = await loadServerTools(options, apiKey, server.name);
+      console.log(formatToolList(tools));
+      return;
+    }
+
+    console.log(formatSingleServerStatus(server));
+    return;
+  }
+
+  if (options.showTools) {
+    const toolsByServer = new Map();
+    for (const server of servers) {
+      if (server.ok === true) {
+        toolsByServer.set(server.name, await loadServerTools(options, apiKey, server.name));
+      }
+    }
+    console.log(formatServerStatus(servers, toolsByServer));
+    return;
+  }
+
+  console.log(formatServerStatus(servers));
+}
+
+async function callApiTool(options, apiKey, toolName, requestBody) {
   const url = new URL(`http://${formatHostForUrl(options.host)}:${options.port}/api/call`);
-  url.searchParams.set("tool", "list_servers");
+  url.searchParams.set("tool", toolName);
 
   if (options.profileProvided) {
     url.searchParams.set("profile", options.profile);
@@ -18,30 +56,38 @@ export async function handleStatusCommand(args) {
       "Content-Type": "application/json",
       [API_KEY_HEADER]: apiKey,
     },
-    body: "{}",
+    body: JSON.stringify(requestBody),
   });
-  const body = await readResponseBody(response);
+  const responseBody = await readResponseBody(response);
 
   if (!response.ok) {
-    throw new Error(`Status request failed with HTTP ${response.status}: ${body.error ?? body.text ?? response.statusText}`);
+    throw new Error(`Status request failed with HTTP ${response.status}: ${responseBody.error ?? responseBody.text ?? response.statusText}`);
   }
 
-  if (Array.isArray(body.structuredContent?.servers)) {
-    console.log(formatServerStatus(body.structuredContent.servers));
-    return;
-  }
-
-  console.log(JSON.stringify(body.structuredContent ?? body, null, 2));
+  return responseBody;
 }
 
-function formatServerStatus(servers) {
+async function loadServerTools(options, apiKey, serverName) {
+  const body = await callApiTool(options, apiKey, "list_tools", { server: serverName });
+  return [...(body.structuredContent?.tools ?? [])].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function formatServerStatus(servers, toolsByServer = new Map()) {
   return servers
     .map((server) => {
       if (server.ok === true) {
-        return `${server.name}: ok`;
+        const lines = [`${server.name}: ok`];
+        const tools = toolsByServer.get(server.name);
+        if (tools) {
+          lines.push("  tools:");
+          for (const line of formatToolList(tools).split("\n")) {
+            lines.push(`    ${line}`);
+          }
+        }
+        return lines.join("\n");
       }
 
-      const lines = [`${server.name}: error${server.error?.message ? `: ${server.error.message}` : ""}`];
+      const lines = [`${server.name}: ${formatErrorLine(server)}`];
       if (server.error?.stderr) {
         lines.push("  stderr:");
         for (const line of String(server.error.stderr).split("\n")) {
@@ -53,11 +99,45 @@ function formatServerStatus(servers) {
     .join("\n");
 }
 
+function formatSingleServerStatus(server) {
+  if (server.ok === true) {
+    return "ok";
+  }
+
+  const lines = [formatErrorLine(server)];
+  if (server.error?.stderr) {
+    lines.push("stderr:");
+    for (const line of String(server.error.stderr).split("\n")) {
+      lines.push(`  ${line}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatErrorLine(server) {
+  return `error${server.error?.message ? `: ${server.error.message}` : ""}`;
+}
+
+function formatToolList(tools) {
+  if (tools.length === 0) {
+    return "No tools.";
+  }
+
+  return tools
+    .map((tool) => {
+      const description = String(tool.description ?? "").trim().replaceAll(/\s+/g, " ");
+      return description ? `- ${tool.name}: ${description}` : `- ${tool.name}`;
+    })
+    .join("\n");
+}
+
 function parseStatusArgs(args) {
   let host = DEFAULT_CLIENT_HOST;
   let port = DEFAULT_PROXY_PORT;
   let profile = DEFAULT_PRESET;
   let profileProvided = false;
+  let serverName;
+  let showTools = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -101,19 +181,23 @@ function parseStatusArgs(args) {
       continue;
     }
 
+    if (argument === "--tools") {
+      showTools = true;
+      continue;
+    }
+
     if (argument.startsWith("--")) {
       throw new Error(`Unknown option "${argument}".\n${getStatusUsage()}`);
     }
 
-    if (profileProvided) {
-      throw new Error(`Profile specified more than once.\n${getStatusUsage()}`);
+    if (serverName !== undefined) {
+      throw new Error(`Server name specified more than once.\n${getStatusUsage()}`);
     }
 
-    profile = argument;
-    profileProvided = true;
+    serverName = argument;
   }
 
-  return { host, port, profile, profileProvided };
+  return { host, port, profile, profileProvided, serverName, showTools };
 }
 
 async function readResponseBody(response) {
@@ -130,7 +214,7 @@ async function readResponseBody(response) {
 }
 
 function getStatusUsage() {
-  return `Usage: ${SERVER_NAME} status [profile] [--profile <name>] [--host <host>] [--port <number>]`;
+  return `Usage: ${SERVER_NAME} status [server] [--tools] [--profile <name>] [--host <host>] [--port <number>]`;
 }
 
 function formatHostForUrl(host) {

@@ -51,6 +51,7 @@ jsmcp server work --port 3000 --bind 0.0.0.0
 jsmcp client --profile work --host 127.0.0.1 --port 3000
 jsmcp client --profile work --port 3000 --session-id my-agent-session
 jsmcp status --profile work --host 127.0.0.1 --port 3000
+jsmcp status kagi --tools --profile work --port 3000
 jsmcp auth
 jsmcp auth firefox_devtools
 ```
@@ -63,7 +64,7 @@ If you are running from a source checkout instead of an installed package, repla
 
 `client` exposes a stdio MCP server that proxies raw MCP/JSON-RPC messages to `server` over WebSocket. It accepts `--host <host>` and `--port <number>` to choose which daemon to connect to, can optionally pass `--profile <name>` to require that the daemon is running the expected preset, and accepts `--session-id <id>` to reuse the same daemon-side log session across client reconnects.
 
-`status` connects to a running daemon over HTTP and prints the configured servers with their startup status or startup errors. It accepts `--host <host>`, `--port <number>`, and optional profile validation via `[profile]` or `--profile <name>`.
+`status` connects to a running daemon over HTTP and prints the configured servers with their startup status or startup errors. Pass a server name to show only that server, and pass `--tools` to include each healthy server's tools and descriptions. It accepts `--host <host>`, `--port <number>`, and optional profile validation via `--profile <name>`.
 
 `run`, `server`, and `client` all accept an optional preset as either a positional argument or `--profile <name>`. The default daemon port is `41528`. If `client --session-id` is omitted, the client generates a random session id and reuses it for reconnects during that client process.
 

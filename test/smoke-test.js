@@ -375,6 +375,31 @@ try {
     assert.match(statusOutput, /broken: error/);
     assert.doesNotMatch(statusOutput, /Broken test server/);
     assert.match(statusOutput, /Failed to start "broken"/);
+
+    const { stdout: singleStatusOutput } = await execFileAsync(
+      "node",
+      [metaServerPath, "status", "math", "--profile", "work", "--port", String(proxyPort)],
+      { env },
+    );
+    assert.equal(singleStatusOutput.trim(), "ok");
+
+    const { stdout: allToolsStatusOutput } = await execFileAsync(
+      "node",
+      [metaServerPath, "status", "--tools", "--profile", "work", "--port", String(proxyPort)],
+      { env },
+    );
+    assert.match(allToolsStatusOutput, /prefixed: ok/);
+    assert.match(allToolsStatusOutput, /tools:\n\s+- read-value: Read a test value/);
+    assert.match(allToolsStatusOutput, /broken: error/);
+    assert.match(allToolsStatusOutput, /stderr:/);
+
+    const { stdout: singleToolsStatusOutput } = await execFileAsync(
+      "node",
+      [metaServerPath, "status", "prefixed", "--tools", "--profile", "work", "--port", String(proxyPort)],
+      { env },
+    );
+    assert.doesNotMatch(singleToolsStatusOutput, /prefixed: ok/);
+    assert.match(singleToolsStatusOutput, /^- read-value: Read a test value/m);
   });
 
   const reconnectPort = await getAvailablePort();
