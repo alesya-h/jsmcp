@@ -142,7 +142,10 @@ export class MetaMcpRuntime {
         timeout: getDiscoveryTimeout(entry.serverConfig),
       });
 
-      startedServer.tools = sortTools(normalizeToolNames(name, listToolsResult.tools, entry.serverConfig));
+      startedServer.tools = filterBlockedTools(
+        sortTools(normalizeToolNames(name, listToolsResult.tools, entry.serverConfig)),
+        entry.serverConfig.blockedToolPolicy,
+      );
 
       this.startErrors.delete(name);
       this.startedServers.set(name, startedServer);
@@ -482,6 +485,14 @@ function filterTools(tools, toolPolicy) {
       : tools.filter((tool) => matchesToolPolicy(toolPolicy, tool.name));
 
   return sortTools(filtered);
+}
+
+function filterBlockedTools(tools, blockedToolPolicy) {
+  if (!blockedToolPolicy) {
+    return tools;
+  }
+
+  return tools.filter((tool) => !matchesToolPolicy(blockedToolPolicy, tool.name));
 }
 
 function sortTools(tools) {

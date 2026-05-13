@@ -135,6 +135,7 @@ Supported `servers.<name>` fields:
 - `timeout`: optional number in milliseconds used for initial tool discovery
 - `strip_tool_prefix`: optional string, `true`, or `false`; strings are removed from exposed tool names, `true` infers a shared prefix, and `false` disables prefix stripping for that server
 - `normalize_tool_names`: optional boolean; converts exposed tool names to `snake_case` after prefix stripping
+- `blocked_tools`: optional server-level deny list; a tool name string or array of exact tool names, `{ glob: "..." }`, and `{ regex: "..." }` selectors. Selectors match final exposed tool names after prefix stripping and normalization, and blocked tools cannot be re-enabled by presets.
 
 Supported `jsmcp` fields:
 
@@ -185,6 +186,8 @@ If `presets` is present, it is an object of preset names. Each preset is an obje
 - any other preset name, such as `presets.work`: additional named preset overrides
 
 If a server strips prefixes or normalizes names, preset tool selectors match the final exposed tool names that agents see.
+
+Server-level `blocked_tools` selectors are applied before preset allowlists. Use them for globally unsafe tools, and use presets for profile-specific whitelists.
 
 Within a preset, server rules work like this:
 

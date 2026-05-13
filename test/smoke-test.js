@@ -136,6 +136,7 @@ try {
         env: {
           TEST_MCP_VALUE: "${SMOKE_TEST_VALUE:-env-ok}",
         },
+        blocked_tools: ["repeat", { glob: "foobar_baz_two" }],
         timeout: 5000,
       },
       broken: {
@@ -210,7 +211,6 @@ try {
         "IssueLookup",
         "add",
         "foobar_baz_one",
-        "foobar_baz_two",
         "kagi_search_fetch",
         "read-env",
       ].sort(),
@@ -278,6 +278,15 @@ try {
     });
     assert.equal(blockedToolResult.isError, true);
     assert.match(blockedToolResult.structuredContent.error, /repeat is not a function/);
+
+    const blockedGlobResult = await client.callTool({
+      name: "execute_code",
+      arguments: {
+        code: 'return await math.foobar_baz_two({});',
+      },
+    });
+    assert.equal(blockedGlobResult.isError, true);
+    assert.match(blockedGlobResult.structuredContent.error, /foobar_baz_two is not a function/);
 
     const clearLogsResult = await client.callTool({ name: "clear_logs", arguments: {} });
     assert.equal(clearLogsResult.structuredContent.cleared, 0);
@@ -532,7 +541,7 @@ try {
           (error) => {
             assert.match(error.message, /cached discovery results changed/);
             assert.match(error.message, /list_tools\(math\) changed/);
-            assert.match(error.message, /added tool: repeat/);
+            assert.match(error.message, /added tools: foobar_baz_two, repeat/);
             return true;
           },
         );

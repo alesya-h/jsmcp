@@ -291,6 +291,7 @@ function parseServerConfig(serverName, config, jsmcpConfig = DEFAULT_JSMCP_CONFI
       enabled: serverConfig.enabled !== false,
       timeout: serverConfig.timeout,
       cwd: typeof serverConfig.cwd === "string" ? serverConfig.cwd : undefined,
+      blockedToolPolicy: parseBlockedToolPolicy(serverName, serverConfig.blocked_tools),
       ...toolNameConfig,
       oauth: false,
     };
@@ -309,6 +310,7 @@ function parseServerConfig(serverName, config, jsmcpConfig = DEFAULT_JSMCP_CONFI
       headers: normalizeStringMap(serverConfig.headers, `Server "${serverName}" headers`),
       enabled: serverConfig.enabled !== false,
       timeout: serverConfig.timeout,
+      blockedToolPolicy: parseBlockedToolPolicy(serverName, serverConfig.blocked_tools),
       ...toolNameConfig,
       oauth: normalizeOAuthConfig(serverConfig.oauth, serverName),
     };
@@ -518,6 +520,30 @@ function parseToolPolicy(serverName, rule, enabledByDefault) {
 
   throw new Error(
     `Preset rule for server "${serverName}" must be true, false, a tool name, or an array of tool selectors.`,
+  );
+}
+
+function parseBlockedToolPolicy(serverName, rule) {
+  if (rule === undefined || rule === null || rule === false) {
+    return null;
+  }
+
+  if (typeof rule === "string") {
+    return {
+      mode: "subset",
+      selectors: [{ type: "exact", value: rule }],
+    };
+  }
+
+  if (Array.isArray(rule)) {
+    return {
+      mode: "subset",
+      selectors: rule.map((selector, index) => parseToolSelector(serverName, selector, index)),
+    };
+  }
+
+  throw new Error(
+    `Server "${serverName}" blocked_tools must be false, a tool name, or an array of tool selectors.`,
   );
 }
 
