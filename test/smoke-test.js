@@ -430,6 +430,21 @@ try {
     assert.match(singleToolsStatusOutput, /^- read_value: Read a test value/m);
   });
 
+  const restartPort = await getAvailablePort();
+  const restartChild = spawn("node", [metaServerPath, "server", "work", "--port", String(restartPort)], {
+    env,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  await waitForDaemonReady(restartChild, `server listening on ws://0.0.0.0:${restartPort}/mcp`);
+  const { stdout: restartOutput } = await execFileAsync(
+    "node",
+    [metaServerPath, "restart", "--port", String(restartPort)],
+    { env },
+  );
+  assert.match(restartOutput, /Restart requested/);
+  const [restartCode] = await once(restartChild, "exit");
+  assert.equal(restartCode, 75);
+
   const reconnectPort = await getAvailablePort();
   const daemon = await startDaemon(env, { presetName: "work", port: reconnectPort });
 

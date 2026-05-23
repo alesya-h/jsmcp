@@ -33,8 +33,20 @@ export async function runProxyServer({ presetName, port, bindHost = DEFAULT_BIND
   await runtime.startAllServers();
 
   const sessions = new Set();
+  let shuttingDown = false;
+  let restartRequested = false;
+  const requestRestart = () => {
+    if (restartRequested) {
+      return;
+    }
+
+    restartRequested = true;
+    setTimeout(() => {
+      void shutdown().finally(() => process.exit(75));
+    }, 50).unref();
+  };
   const httpServer = createHttpServer((request, response) => {
-    void handleHttpRequest(request, response, runtime, apiKey, presetName).catch((error) => {
+    void handleHttpRequest(request, response, runtime, apiKey, presetName, requestRestart).catch((error) => {
       writeJson(response, 500, {
         error: `Internal server error: ${getErrorMessage(error)}`,
       });
@@ -46,7 +58,6 @@ export async function runProxyServer({ presetName, port, bindHost = DEFAULT_BIND
       return protocols.has(MCP_SUBPROTOCOL) ? MCP_SUBPROTOCOL : false;
     },
   });
-  let shuttingDown = false;
 
   httpServer.on("upgrade", (request, socket, head) => {
     const requestUrl = new URL(request.url || "/", `http://${request.headers.host || `127.0.0.1:${port}`}`);
@@ -135,13 +146,27 @@ export async function runProxyServer({ presetName, port, bindHost = DEFAULT_BIND
   );
 }
 
-async function handleHttpRequest(request, response, runtime, apiKey, presetName) {
+async function handleHttpRequest(request, response, runtime, apiKey, presetName, requestRestart) {
   if (!isAuthorized(request, apiKey)) {
     writeJson(response, 401, { error: "Unauthorized" });
     return;
   }
 
   const requestUrl = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+  if (requestUrl.pathname === "/api/restart") {
+    if (request.method !== "POST") {
+      writeJson(response, 405, { error: "Use POST." });
+      return;
+    }
+
+    writeJson(response, 202, {
+      ok: true,
+      message: "Restart requested. The jsmcp daemon will exit so its supervisor can start it again.",
+    });
+    requestRestart();
+    return;
+  }
+
   if (requestUrl.pathname === DEFAULT_PROXY_PATH) {
     response.writeHead(426, { "Content-Type": "text/plain; charset=utf-8" });
     response.end("Use WebSocket on /mcp.\n");

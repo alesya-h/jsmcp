@@ -52,6 +52,7 @@ jsmcp client --profile work --host 127.0.0.1 --port 3000
 jsmcp client --profile work --port 3000 --session-id my-agent-session
 jsmcp status --profile work --host 127.0.0.1 --port 3000
 jsmcp status kagi --tools --profile work --port 3000
+jsmcp restart --host 127.0.0.1 --port 3000
 jsmcp auth
 jsmcp auth firefox_devtools
 ```
@@ -66,11 +67,13 @@ If you are running from a source checkout instead of an installed package, repla
 
 `status` connects to a running daemon over HTTP and prints the configured servers in the selected profile with their startup status or startup errors. Pass a server name to show only that server, and pass `--tools` to include each healthy server's allowed tools and descriptions. It accepts `--host <host>`, `--port <number>`, and `--profile <name>`.
 
+`restart` asks a running daemon over HTTP to exit with a restart-request status. Run it under a supervisor such as the included systemd user service so the daemon is started again automatically. It accepts `--host <host>` and `--port <number>`.
+
 `run`, `server`, and `client` all accept an optional preset as either a positional argument or `--profile <name>`. The default daemon port is `41528`. If `client --session-id` is omitted, the client generates a random session id and reuses it for reconnects during that client process.
 
 On first `server` start, `jsmcp` creates an API key at `$XDG_CONFIG_HOME/jsmcp/api-key.txt`, or `~/.config/jsmcp/api-key.txt` if `XDG_CONFIG_HOME` is not set. Daemon WebSocket and HTTP API requests must include it in the `X-JSMCP-API-Key` header; unauthenticated requests receive `401`.
 
-The daemon also exposes the five meta tools through one JSON HTTP endpoint:
+The daemon also exposes the five meta tools through one JSON HTTP endpoint, plus a restart endpoint:
 
 ```text
 POST /api/call?tool=list_servers&profile=<name>
@@ -78,9 +81,10 @@ POST /api/call?tool=list_tools&profile=<name>
 POST /api/call?tool=execute_code&sessionId=<id>&profile=<name>
 POST /api/call?tool=fetch_logs&sessionId=<id>
 POST /api/call?tool=clear_logs&sessionId=<id>
+POST /api/restart
 ```
 
-The request body is a JSON object matching the selected MCP tool arguments. HTTP callers may include `sessionId` in the query string to use a stable daemon-side log session. They may include `profile` to select which profile filters the server and tool view for that request.
+The `/api/call` request body is a JSON object matching the selected MCP tool arguments. HTTP callers may include `sessionId` in the query string to use a stable daemon-side log session. They may include `profile` to select which profile filters the server and tool view for that request.
 
 Use `jsmcp auth` to manage OAuth for remote servers. With no arguments it lists remote servers that have OAuth enabled. With a server name it starts the OAuth flow for that server.
 
