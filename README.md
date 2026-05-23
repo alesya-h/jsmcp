@@ -65,7 +65,7 @@ If you are running from a source checkout instead of an installed package, repla
 
 `client` exposes a stdio MCP server that proxies raw MCP/JSON-RPC messages to `server` over WebSocket. It accepts `--host <host>` and `--port <number>` to choose which daemon to connect to, can optionally pass `--profile <name>` to select that daemon-side profile, and accepts `--session-id <id>` to reuse the same daemon-side log session across client reconnects.
 
-`status` connects to a running daemon over HTTP and prints the configured servers in the selected profile with their startup status or startup errors. Pass a server name to show only that server, and pass `--tools` to include each healthy server's allowed tools and descriptions. It accepts `--host <host>`, `--port <number>`, and `--profile <name>`.
+`status` connects to the daemon over HTTP, retrying until it is reachable, and prints the configured servers in the selected profile with their startup status or startup errors. Pass a server name to show only that server, and pass `--tools` to include each healthy server's allowed tools and descriptions. It accepts `--host <host>`, `--port <number>`, and `--profile <name>`.
 
 `restart` asks a running daemon over HTTP to exit with a restart-request status. Run it under a supervisor such as the included systemd user service so the daemon is started again automatically. It accepts `--host <host>` and `--port <number>`.
 

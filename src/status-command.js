@@ -1,5 +1,10 @@
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { loadApiKey } from "./api-key.js";
 import { API_KEY_HEADER, DEFAULT_CLIENT_HOST, DEFAULT_PRESET, DEFAULT_PROXY_PORT, SERVER_NAME } from "./constants.js";
+
+const STATUS_RETRY_DELAY_MS = 500;
+let statusRetryDotsDisplayed = false;
 
 export async function handleStatusCommand(args) {
   const options = parseStatusArgs(args);
@@ -7,7 +12,7 @@ export async function handleStatusCommand(args) {
   const serversBody = await callApiTool(options, apiKey, "list_servers", {});
 
   if (!Array.isArray(serversBody.structuredContent?.servers)) {
-    console.log(JSON.stringify(serversBody.structuredContent ?? serversBody, null, 2));
+    writeStatusOutput(JSON.stringify(serversBody.structuredContent ?? serversBody, null, 2));
     return;
   }
 
@@ -20,11 +25,11 @@ export async function handleStatusCommand(args) {
 
     if (options.showTools && server.ok === true) {
       const tools = await loadServerTools(options, apiKey, server.name);
-      console.log(formatToolList(tools));
+      writeStatusOutput(formatToolList(tools));
       return;
     }
 
-    console.log(formatSingleServerStatus(server));
+    writeStatusOutput(formatSingleServerStatus(server));
     return;
   }
 
@@ -35,11 +40,11 @@ export async function handleStatusCommand(args) {
         toolsByServer.set(server.name, await loadServerTools(options, apiKey, server.name));
       }
     }
-    console.log(formatServerStatus(servers, toolsByServer));
+    writeStatusOutput(formatServerStatus(servers, toolsByServer));
     return;
   }
 
-  console.log(formatServerStatus(servers));
+  writeStatusOutput(formatServerStatus(servers));
 }
 
 async function callApiTool(options, apiKey, toolName, requestBody) {
@@ -50,26 +55,51 @@ async function callApiTool(options, apiKey, toolName, requestBody) {
     url.searchParams.set("profile", options.profile);
   }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      [API_KEY_HEADER]: apiKey,
-    },
-    body: JSON.stringify(requestBody),
-  });
-  const responseBody = await readResponseBody(response);
+  for (;;) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [API_KEY_HEADER]: apiKey,
+        },
+        body: JSON.stringify(requestBody),
+      });
+      const responseBody = await readResponseBody(response);
 
-  if (!response.ok) {
-    throw new Error(`Status request failed with HTTP ${response.status}: ${responseBody.error ?? responseBody.text ?? response.statusText}`);
+      if (!response.ok) {
+        throw new Error(`Status request failed with HTTP ${response.status}: ${responseBody.error ?? responseBody.text ?? response.statusText}`);
+      }
+
+      return responseBody;
+    } catch (error) {
+      if (!isRetriableStatusError(error)) {
+        throw error;
+      }
+
+      process.stderr.write(".");
+      statusRetryDotsDisplayed = true;
+      await sleep(STATUS_RETRY_DELAY_MS);
+    }
   }
-
-  return responseBody;
 }
 
 async function loadServerTools(options, apiKey, serverName) {
   const body = await callApiTool(options, apiKey, "list_tools", { server: serverName });
   return [...(body.structuredContent?.tools ?? [])].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function isRetriableStatusError(error) {
+  return error instanceof TypeError || error?.cause?.code === "ECONNREFUSED" || error?.cause?.code === "ECONNRESET";
+}
+
+function writeStatusOutput(text) {
+  if (statusRetryDotsDisplayed) {
+    process.stderr.write("\n");
+    statusRetryDotsDisplayed = false;
+  }
+
+  console.log(text);
 }
 
 function formatServerStatus(servers, toolsByServer = new Map()) {
