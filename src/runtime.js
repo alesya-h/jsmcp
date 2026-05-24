@@ -19,7 +19,7 @@ import {
   normalizeServerEntries,
   resolveAuthStorePath,
 } from "./config.js";
-import { closeClient, getErrorMessage, toJsonSafe, withTimeout } from "./utils.js";
+import { cloneJson, closeClient, getErrorMessage, toJsonSafe, withTimeout } from "./utils.js";
 
 const DEFAULT_LOG_SESSION = "__default__";
 
@@ -37,6 +37,7 @@ export class MetaMcpRuntime {
     this.pendingStarts = new Map();
     this.startErrors = new Map();
     this.logsBySession = new Map();
+    this.memoryBySession = new Map();
     this.nextLogId = 1;
   }
 
@@ -201,7 +202,24 @@ export class MetaMcpRuntime {
       }
     }
 
+    context.jsmcp = Object.freeze({
+      memory: this.createSessionMemory(profileName, sessionId),
+    });
+
     return context;
+  }
+
+  createSessionMemory(profileName, sessionId) {
+    return Object.freeze({
+      get: (...args) => this.getMemoryValue(profileName, sessionId, args[0], args[1], args.length >= 2),
+      set: (key, value) => this.setMemoryValue(profileName, sessionId, key, value),
+      has: (key) => this.hasMemoryValue(profileName, sessionId, key),
+      delete: (key) => this.deleteMemoryValue(profileName, sessionId, key),
+      keys: () => this.getMemoryKeys(profileName, sessionId),
+      entries: () => this.getMemoryEntries(profileName, sessionId),
+      clear: () => this.clearMemory(profileName, sessionId),
+      update: (key, updater) => this.updateMemoryValue(profileName, sessionId, key, updater),
+    });
   }
 
   createServerLibrary(profileName, serverName, tools) {
@@ -273,6 +291,58 @@ export class MetaMcpRuntime {
     return cleared;
   }
 
+  getMemoryValue(profileName, sessionId, key, defaultValue, hasDefaultValue = false) {
+    const normalizedKey = normalizeMemoryKey(key);
+    const memory = this.getSessionMemory(profileName, sessionId);
+
+    if (!memory.has(normalizedKey)) {
+      return hasDefaultValue ? cloneJsonSafe(defaultValue) : undefined;
+    }
+
+    return cloneJson(memory.get(normalizedKey));
+  }
+
+  setMemoryValue(profileName, sessionId, key, value) {
+    const normalizedKey = normalizeMemoryKey(key);
+    const memory = this.getSessionMemory(profileName, sessionId);
+    const safeValue = cloneJsonSafe(value);
+    memory.set(normalizedKey, safeValue);
+    return cloneJson(safeValue);
+  }
+
+  hasMemoryValue(profileName, sessionId, key) {
+    return this.getSessionMemory(profileName, sessionId).has(normalizeMemoryKey(key));
+  }
+
+  deleteMemoryValue(profileName, sessionId, key) {
+    return this.getSessionMemory(profileName, sessionId).delete(normalizeMemoryKey(key));
+  }
+
+  getMemoryKeys(profileName, sessionId) {
+    return [...this.getSessionMemory(profileName, sessionId).keys()];
+  }
+
+  getMemoryEntries(profileName, sessionId) {
+    return [...this.getSessionMemory(profileName, sessionId).entries()].map(([key, value]) => [key, cloneJson(value)]);
+  }
+
+  clearMemory(profileName, sessionId) {
+    const memory = this.getSessionMemory(profileName, sessionId);
+    const cleared = memory.size;
+    memory.clear();
+    return cleared;
+  }
+
+  async updateMemoryValue(profileName, sessionId, key, updater) {
+    if (typeof updater !== "function") {
+      throw new Error("jsmcp.memory.update requires an updater function.");
+    }
+
+    const currentValue = this.getMemoryValue(profileName, sessionId, key);
+    const nextValue = await updater(currentValue);
+    return this.setMemoryValue(profileName, sessionId, key, nextValue);
+  }
+
   requireServerEntry(name) {
     const entry = this.serverEntries.get(name);
     if (!entry) {
@@ -320,6 +390,7 @@ export class MetaMcpRuntime {
     this.startedServers.clear();
     this.pendingStarts.clear();
     this.logsBySession.clear();
+    this.memoryBySession.clear();
     await Promise.allSettled(servers.map((server) => closeClient(server.client)));
   }
 
@@ -333,6 +404,18 @@ export class MetaMcpRuntime {
     }
 
     return logs;
+  }
+
+  getSessionMemory(profileName, sessionId) {
+    const key = getMemorySessionKey(profileName, sessionId);
+    let memory = this.memoryBySession.get(key);
+
+    if (!memory) {
+      memory = new Map();
+      this.memoryBySession.set(key, memory);
+    }
+
+    return memory;
   }
 }
 
@@ -590,6 +673,22 @@ function renderToolContent(content) {
 
 function getLogSessionKey(sessionId) {
   return sessionId ?? DEFAULT_LOG_SESSION;
+}
+
+function getMemorySessionKey(profileName, sessionId) {
+  return `${profileName}:${sessionId ?? DEFAULT_LOG_SESSION}`;
+}
+
+function normalizeMemoryKey(key) {
+  if (typeof key !== "string") {
+    throw new Error("jsmcp.memory keys must be strings.");
+  }
+
+  return key;
+}
+
+function cloneJsonSafe(value) {
+  return cloneJson(toJsonSafe(value));
 }
 
 function createCapturedConsole(runtime, sessionId) {

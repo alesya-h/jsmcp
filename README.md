@@ -270,6 +270,7 @@ OAuth tokens and registration state are stored in `$XDG_DATA_HOME/jsmcp/oauth.js
 - `list_servers()` and `list_tools(server)` return only the servers and tools allowed in the connection's selected profile
 - `execute_code({ code, data?, timeoutMs? })` does not manage server lifecycle; it can only use servers that are already started
 - prefer `execute_code({ code, ... })` whenever the work would require more than a single tool call
+- `execute_code()` exposes session-scoped in-memory JSON storage at `jsmcp.memory`
 - `console.log`, `console.info`, `console.warn`, and `console.error` inside `execute_code()` are stored for `fetch_logs()`
 - `fetch_logs()` drains the log buffer on read
 
@@ -294,6 +295,22 @@ With data:
 ```js
 return data.message;
 ```
+
+With in-memory session storage:
+
+```js
+await jsmcp.memory.set("search_results", await search.query({ q: "example" }));
+return await jsmcp.memory.keys();
+```
+
+A later `execute_code()` call in the same profile and session can read it:
+
+```js
+const results = await jsmcp.memory.get("search_results", []);
+return results.slice(0, 3);
+```
+
+Available methods are `get(key, defaultValue?)`, `set(key, value)`, `has(key)`, `delete(key)`, `keys()`, `entries()`, `clear()`, and `update(key, updater)`. Stored values are converted with the same JSON-safe conversion used for `execute_code()` results. Memory is in-process only and is cleared when `jsmcp` exits.
 
 If the MCP tool returns `structuredContent`, that is what the JavaScript call resolves to. So the example above can return:
 

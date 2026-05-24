@@ -124,6 +124,56 @@ try {
     });
     assert.equal(dataResult.isError, undefined);
     assert.deepEqual(dataResult.structuredContent, { value: 'hello "quoted" world' });
+
+    const memorySetResult = await client.callTool({
+      name: "execute_code",
+      arguments: {
+        code: [
+          "const state = { count: 1, big: 1n, fn: function saved() {} };",
+          "state.self = state;",
+          "await jsmcp.memory.set('state', state);",
+          "return await jsmcp.memory.keys();",
+        ].join("\n"),
+      },
+    });
+    assert.equal(memorySetResult.isError, undefined);
+    assert.deepEqual(memorySetResult.structuredContent, { value: ["state"] });
+
+    const memoryGetResult = await client.callTool({
+      name: "execute_code",
+      arguments: {
+        code: "return { state: await jsmcp.memory.get('state'), missing: await jsmcp.memory.get('missing', { fallback: true }) };",
+      },
+    });
+    assert.equal(memoryGetResult.isError, undefined);
+    assert.deepEqual(memoryGetResult.structuredContent, {
+      state: {
+        count: 1,
+        big: "1",
+        fn: "[Function saved]",
+        self: "[Circular]",
+      },
+      missing: { fallback: true },
+    });
+
+    const memoryCloneResult = await client.callTool({
+      name: "execute_code",
+      arguments: {
+        code: "const state = await jsmcp.memory.get('state'); state.count = 99; return await jsmcp.memory.get('state');",
+      },
+    });
+    assert.deepEqual(memoryCloneResult.structuredContent.count, 1);
+
+    const memoryUpdateResult = await client.callTool({
+      name: "execute_code",
+      arguments: {
+        code: "await jsmcp.memory.update('state', (state) => ({ ...state, count: state.count + 1 })); return { entries: await jsmcp.memory.entries(), cleared: await jsmcp.memory.clear(), hasState: await jsmcp.memory.has('state') };",
+      },
+    });
+    assert.equal(memoryUpdateResult.structuredContent.entries[0][0], "state");
+    assert.equal(memoryUpdateResult.structuredContent.entries[0][1].count, 2);
+    assert.equal(memoryUpdateResult.structuredContent.cleared, 1);
+    assert.equal(memoryUpdateResult.structuredContent.hasState, false);
   });
 
   await writeConfig({
@@ -334,7 +384,7 @@ try {
         await client.callTool({
           name: "execute_code",
           arguments: {
-            code: 'console.log("persisted reconnect log"); return await math.add({ a: 2, b: 3 });',
+            code: 'console.log("persisted reconnect log"); await jsmcp.memory.set("shared", { value: 5 }); return await math.add({ a: 2, b: 3 });',
           },
         });
       },
@@ -347,6 +397,14 @@ try {
         const logsResult = await client.callTool({ name: "fetch_logs", arguments: {} });
         assert.equal(logsResult.structuredContent.logs.length, 1);
         assert.match(logsResult.structuredContent.logs[0].message, /persisted reconnect log/);
+
+        const memoryResult = await client.callTool({
+          name: "execute_code",
+          arguments: {
+            code: 'return await jsmcp.memory.get("shared");',
+          },
+        });
+        assert.deepEqual(memoryResult.structuredContent, { value: 5 });
       },
     );
 
