@@ -351,6 +351,35 @@ try {
     );
 
     const apiKey = (await readFile(path.join(tempConfigHome, "jsmcp", "api-key.txt"), "utf8")).trim();
+    const alternateConfigHome = await mkdtemp(path.join(os.tmpdir(), "jsmcp-client-"));
+    try {
+      await withClient(
+        { ...env, XDG_CONFIG_HOME: alternateConfigHome, JSMCP_API_KEY: apiKey },
+        { command: "client", presetName: "work", port: proxyPort, useProfileFlag: true },
+        async (client) => {
+          const listResult = await client.callTool({ name: "list_servers", arguments: {} });
+          assert.deepEqual(
+            [...listResult.structuredContent.servers.map((server) => server.name)].sort(),
+            ["broken", "math", "prefixed"],
+          );
+        },
+      );
+
+      await withClient(
+        { ...env, XDG_CONFIG_HOME: alternateConfigHome, JSMCP_API_KEY: "wrong-key" },
+        { command: "client", presetName: "work", port: proxyPort, useProfileFlag: true, apiKey },
+        async (client) => {
+          const listResult = await client.callTool({ name: "list_servers", arguments: {} });
+          assert.deepEqual(
+            [...listResult.structuredContent.servers.map((server) => server.name)].sort(),
+            ["broken", "math", "prefixed"],
+          );
+        },
+      );
+    } finally {
+      await rm(alternateConfigHome, { recursive: true, force: true });
+    }
+
     const unauthorizedRestResult = await fetch(`http://127.0.0.1:${proxyPort}/api/call?tool=list_servers`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -611,7 +640,7 @@ async function writeConfig(config) {
 }
 
 async function withClient(env, options, callback) {
-  const { command = "run", presetName, port, sessionId, useProfileFlag = false } = options;
+  const { command = "run", presetName, port, sessionId, useProfileFlag = false, apiKey } = options;
   const profileArgs =
     presetName === undefined
       ? []
@@ -619,13 +648,14 @@ async function withClient(env, options, callback) {
         ? ["--profile", presetName]
         : [presetName];
   const sessionArgs = sessionId === undefined ? [] : ["--session-id", sessionId];
+  const apiKeyArgs = apiKey === undefined ? [] : ["--api-key", apiKey];
   const client = new Client({
     name: "smoke-test",
     version: "1.0.0",
   });
   const transport = new StdioClientTransport({
     command: "node",
-    args: [metaServerPath, command, ...profileArgs, ...(port ? ["--port", String(port)] : []), ...sessionArgs],
+    args: [metaServerPath, command, ...profileArgs, ...(port ? ["--port", String(port)] : []), ...sessionArgs, ...apiKeyArgs],
     env,
     stderr: "inherit",
   });

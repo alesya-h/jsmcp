@@ -23,8 +23,8 @@ import {
   isResponseForId,
 } from "./messages.js";
 
-export async function runProxyClient({ host = DEFAULT_CLIENT_HOST, port, requestedProfile, sessionId }) {
-  const apiKey = await loadApiKey();
+export async function runProxyClient({ host = DEFAULT_CLIENT_HOST, port, requestedProfile, sessionId, apiKey: apiKeyOverride }) {
+  const apiKey = await loadApiKey(apiKeyOverride);
   const wsUrl = new URL(`ws://${formatHostForUrl(host)}:${port}${DEFAULT_PROXY_PATH}`);
   if (requestedProfile) {
     wsUrl.searchParams.set("profile", requestedProfile);

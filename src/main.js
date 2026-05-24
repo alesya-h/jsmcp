@@ -63,6 +63,7 @@ export async function main() {
     port: options.port,
     requestedProfile: options.profileProvided ? options.presetName : undefined,
     sessionId: options.sessionId,
+    apiKey: options.apiKey,
   });
 }
 
@@ -99,6 +100,7 @@ function parseRunCommandArgs(command, args) {
   let profileProvided = false;
   let port = DEFAULT_PROXY_PORT;
   let sessionId;
+  let apiKey;
   let bindHost = DEFAULT_BIND_HOST;
   let host = DEFAULT_CLIENT_HOST;
 
@@ -170,6 +172,24 @@ function parseRunCommandArgs(command, args) {
       continue;
     }
 
+    if (argument === "--api-key") {
+      if (command !== "client") {
+        throw new Error(`--api-key is only valid for the client command.\n${getRunUsage(command)}`);
+      }
+
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error(`Missing value for --api-key.\n${getRunUsage(command)}`);
+      }
+      if (apiKey !== undefined) {
+        throw new Error(`API key specified more than once.\n${getRunUsage(command)}`);
+      }
+
+      apiKey = value;
+      index += 1;
+      continue;
+    }
+
     if (argument === "--port") {
       const value = args[index + 1];
       if (!value) {
@@ -197,7 +217,7 @@ function parseRunCommandArgs(command, args) {
     profileProvided = true;
   }
 
-  return { bindHost, host, port, presetName, profileProvided, sessionId };
+  return { apiKey, bindHost, host, port, presetName, profileProvided, sessionId };
 }
 
 function getMainUsage() {
@@ -206,12 +226,12 @@ function getMainUsage() {
     `Commands: auth, status, restart, run, server, client`,
     `Run commands accept [profile] [--profile <name>] [--port <number>]`,
     `Server also accepts [--bind <host>]`,
-    `Client also accepts [--host <host>] [--session-id <id>]`,
+    `Client also accepts [--host <host>] [--session-id <id>] [--api-key <key>]`,
   ].join("\n");
 }
 
 function getRunUsage(command) {
   const bindUsage = command === "server" ? " [--bind <host>]" : "";
-  const clientUsage = command === "client" ? " [--host <host>] [--session-id <id>]" : "";
+  const clientUsage = command === "client" ? " [--host <host>] [--session-id <id>] [--api-key <key>]" : "";
   return `Usage: ${SERVER_NAME} ${command} [profile] [--profile <name>] [--port <number>]${bindUsage}${clientUsage}`;
 }

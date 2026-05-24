@@ -50,6 +50,7 @@ jsmcp run work
 jsmcp server work --port 3000 --bind 0.0.0.0
 jsmcp client --profile work --host 127.0.0.1 --port 3000
 jsmcp client --profile work --port 3000 --session-id my-agent-session
+jsmcp client --profile work --host remote.example.com --api-key "$JSMCP_API_KEY"
 jsmcp status --profile work --host 127.0.0.1 --port 3000
 jsmcp status kagi --tools --profile work --port 3000
 jsmcp restart --host 127.0.0.1 --port 3000
@@ -63,7 +64,7 @@ If you are running from a source checkout instead of an installed package, repla
 
 `server` starts a long-lived daemon on `ws://<bind>:<port>/mcp`, starts every globally enabled MCP server once, and keeps those underlying connections warm. The chosen preset becomes the default profile for connections that do not request one. It binds to `0.0.0.0` by default and accepts `--bind <host>` to choose another bind address.
 
-`client` exposes a stdio MCP server that proxies raw MCP/JSON-RPC messages to `server` over WebSocket. It accepts `--host <host>` and `--port <number>` to choose which daemon to connect to, can optionally pass `--profile <name>` to select that daemon-side profile, and accepts `--session-id <id>` to reuse the same daemon-side log session across client reconnects.
+`client` exposes a stdio MCP server that proxies raw MCP/JSON-RPC messages to `server` over WebSocket. It accepts `--host <host>` and `--port <number>` to choose which daemon to connect to, can optionally pass `--profile <name>` to select that daemon-side profile, accepts `--session-id <id>` to reuse the same daemon-side log session across client reconnects, and accepts `--api-key <key>` to authenticate with a daemon whose API key differs from the local key file.
 
 `status` connects to the daemon over HTTP, retrying until it is reachable, and prints the configured servers in the selected profile with their startup status or startup errors. Pass a server name to show only that server, and pass `--tools` to include each healthy server's allowed tools and descriptions. It accepts `--host <host>`, `--port <number>`, and `--profile <name>`.
 
@@ -71,7 +72,7 @@ If you are running from a source checkout instead of an installed package, repla
 
 `run`, `server`, and `client` all accept an optional preset as either a positional argument or `--profile <name>`. The default daemon port is `41528`. If `client --session-id` is omitted, the client generates a random session id and reuses it for reconnects during that client process.
 
-On first `server` start, `jsmcp` creates an API key at `$XDG_CONFIG_HOME/jsmcp/api-key.txt`, or `~/.config/jsmcp/api-key.txt` if `XDG_CONFIG_HOME` is not set. Daemon WebSocket and HTTP API requests must include it in the `X-JSMCP-API-Key` header; unauthenticated requests receive `401`.
+On first `server` start, `jsmcp` creates an API key at `$XDG_CONFIG_HOME/jsmcp/api-key.txt`, or `~/.config/jsmcp/api-key.txt` if `XDG_CONFIG_HOME` is not set. Daemon WebSocket and HTTP API requests must include it in the `X-JSMCP-API-Key` header; unauthenticated requests receive `401`. CLI commands that connect to the daemon read the key from `JSMCP_API_KEY` when it is set, otherwise from the local key file. `jsmcp client` also accepts `--api-key <key>`, which takes precedence over `JSMCP_API_KEY`.
 
 The daemon also exposes the five meta tools through one JSON HTTP endpoint, plus a restart endpoint:
 
