@@ -1,15 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { DEFAULT_CODE_TIMEOUT_MS, SERVER_NAME, SERVER_VERSION } from "./constants.js";
+import { SERVER_NAME, SERVER_VERSION } from "./constants.js";
+import { executeCodeTool } from "./execute-code.js";
 import {
-  formatExecutionValue,
   renderClearLogsText,
   renderLogsText,
   renderServerListText,
   renderToolListText,
 } from "./rendering.js";
-import { getErrorMessage } from "./utils.js";
 
 export async function createMetaServer(runtime, profileName) {
   const server = new McpServer({
@@ -60,33 +59,15 @@ export async function createMetaServer(runtime, profileName) {
     "execute_code",
     {
       description:
-        "Execute JavaScript against started MCP server namespaces. You MUST call list_tools for a server before using its tools here. After calling list_servers, each started server is available as a global object and each allowed tool is a function on it. Optional input data is an object exposed as the global variable data, it might be useful to avoid having to escape strings inside the code string. Session-scoped in-memory JSON storage is available as jsmcp.memory with get/set/has/delete/keys/entries/clear/update methods. Prefer underscore aliases when available, for example return await math.add({ a: 2, b: 5 }) or return await browser.open_tab({ url: \"https://example.com\" }). Original tool names still work with bracket access such as obj[\"tool-name\"], but prefer obj.tool_name for readability. Prefer writing JavaScript here whenever the work would require more than a single tool call, because code makes multi-step tool use easier and less error-prone. console.log/info/warn/error write to fetch_logs, not the return value.",
+        "Execute JavaScript against started MCP server namespaces. You MUST call list_tools for a server before using its tools here. After calling list_servers, each started server is available as a global object and each allowed tool is a function on it. Optional input data is an object exposed as the global variable data, it might be useful to avoid having to escape strings inside the code string. Session-scoped in-memory JSON storage is available as jsmcp.memory with get/set/has/delete/keys/entries/clear/update methods. Prefer underscore aliases when available, for example return await math.add({ a: 2, b: 5 }) or return await browser.open_tab({ url: \"https://example.com\" }). Original tool names still work with bracket access such as obj[\"tool-name\"], but prefer obj.tool_name for readability. Prefer writing JavaScript here whenever the work would require more than a single tool call, because code makes multi-step tool use easier and less error-prone. console.log/info/warn/error write to fetch_logs, not the return value. Connected tool calls automatically resolve to structuredContent when present, otherwise to a string for text-only results or an object with text/content/meta for mixed content. Successful execute_code results always use structuredContent { value, executionMs }; errors use { error, executionMs }. executionMs is elapsed wall-clock time including awaited tool calls. Returned strings appear as raw text by default; pass rawText: false for a JSON-formatted envelope in content.",
       inputSchema: z.object({
         code: z.string().min(1),
         data: z.object({}).passthrough().optional(),
         timeoutMs: z.number().int().positive().max(300000).optional(),
+        rawText: z.boolean().default(true).describe("Show returned strings directly as text. Set false to render the JSON result envelope instead."),
       }),
     },
-    async ({ code, data, timeoutMs }, extra) => {
-      try {
-        const value = await runtime.executeCode(code, timeoutMs ?? DEFAULT_CODE_TIMEOUT_MS, extra.sessionId, data, profileName);
-        const structuredContent =
-          value && typeof value === "object" && !Array.isArray(value)
-            ? value
-            : { value };
-
-        return {
-          content: [{ type: "text", text: formatExecutionValue(structuredContent) }],
-          structuredContent,
-        };
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: getErrorMessage(error) }],
-          structuredContent: { error: getErrorMessage(error) },
-          isError: true,
-        };
-      }
-    },
+    async (args, extra) => executeCodeTool(runtime, args, extra.sessionId, profileName),
   );
 
   server.registerTool(

@@ -113,7 +113,7 @@ try {
       },
     });
     assert.equal(envResult.isError, undefined);
-    assert.deepEqual(envResult.structuredContent, { value: "env-ok" });
+    assertExecutionValue(envResult, { value: "env-ok" });
 
     const dataResult = await client.callTool({
       name: "execute_code",
@@ -123,7 +123,19 @@ try {
       },
     });
     assert.equal(dataResult.isError, undefined);
-    assert.deepEqual(dataResult.structuredContent, { value: 'hello "quoted" world' });
+    assertExecutionValue(dataResult, 'hello "quoted" world');
+
+    const textToolResult = await client.callTool({
+      name: "execute_code",
+      arguments: {
+        code: "return await math.repeat_text({ text: data.text, times: 2 });",
+        data: { text: 'hello "world"\n' },
+      },
+    });
+    assertExecutionValue(textToolResult, 'hello "world"\nhello "world"\n');
+    assert.equal(textToolResult.content[0].text, textToolResult.structuredContent.value);
+
+    await testExecutionResults((args) => client.callTool({ name: "execute_code", arguments: args }));
 
     const memorySetResult = await client.callTool({
       name: "execute_code",
@@ -137,7 +149,7 @@ try {
       },
     });
     assert.equal(memorySetResult.isError, undefined);
-    assert.deepEqual(memorySetResult.structuredContent, { value: ["state"] });
+    assertExecutionValue(memorySetResult, ["state"]);
 
     const memoryGetResult = await client.callTool({
       name: "execute_code",
@@ -146,7 +158,7 @@ try {
       },
     });
     assert.equal(memoryGetResult.isError, undefined);
-    assert.deepEqual(memoryGetResult.structuredContent, {
+    assertExecutionValue(memoryGetResult, {
       state: {
         count: 1,
         big: "1",
@@ -162,7 +174,7 @@ try {
         code: "const state = await jsmcp.memory.get('state'); state.count = 99; return await jsmcp.memory.get('state');",
       },
     });
-    assert.deepEqual(memoryCloneResult.structuredContent.count, 1);
+    assert.deepEqual(memoryCloneResult.structuredContent.value.count, 1);
 
     const memoryUpdateResult = await client.callTool({
       name: "execute_code",
@@ -170,10 +182,10 @@ try {
         code: "await jsmcp.memory.update('state', (state) => ({ ...state, count: state.count + 1 })); return { entries: await jsmcp.memory.entries(), cleared: await jsmcp.memory.clear(), hasState: await jsmcp.memory.has('state') };",
       },
     });
-    assert.equal(memoryUpdateResult.structuredContent.entries[0][0], "state");
-    assert.equal(memoryUpdateResult.structuredContent.entries[0][1].count, 2);
-    assert.equal(memoryUpdateResult.structuredContent.cleared, 1);
-    assert.equal(memoryUpdateResult.structuredContent.hasState, false);
+    assert.equal(memoryUpdateResult.structuredContent.value.entries[0][0], "state");
+    assert.equal(memoryUpdateResult.structuredContent.value.entries[0][1].count, 2);
+    assert.equal(memoryUpdateResult.structuredContent.value.cleared, 1);
+    assert.equal(memoryUpdateResult.structuredContent.value.hasState, false);
   });
 
   await writeConfig({
@@ -283,7 +295,7 @@ try {
         code: "return await prefixed.read_value({});",
       },
     });
-    assert.deepEqual(prefixedExecuteResult.structuredContent, { value: "read-value" });
+    assertExecutionValue(prefixedExecuteResult, { value: "read-value" });
 
     const executeResult = await client.callTool({
       name: "execute_code",
@@ -292,7 +304,7 @@ try {
       },
     });
     assert.equal(executeResult.isError, undefined);
-    assert.deepEqual(executeResult.structuredContent, { sum: 7 });
+    assertExecutionValue(executeResult, { sum: 7 });
 
     const aliasResult = await client.callTool({
       name: "execute_code",
@@ -301,7 +313,7 @@ try {
       },
     });
     assert.equal(aliasResult.isError, undefined);
-    assert.deepEqual(aliasResult.structuredContent, { value: "foobar_baz_one" });
+    assertExecutionValue(aliasResult, { value: "foobar_baz_one" });
 
     const logResult = await client.callTool({
       name: "execute_code",
@@ -309,7 +321,7 @@ try {
         code: 'console.log("hello", { value: 3 }); return await math.add({ a: 1, b: 2 });',
       },
     });
-    assert.deepEqual(logResult.structuredContent, { sum: 3 });
+    assertExecutionValue(logResult, { sum: 3 });
 
     const fetchLogsResult = await client.callTool({ name: "fetch_logs", arguments: {} });
     assert.equal(fetchLogsResult.structuredContent.logs.length, 1);
@@ -372,7 +384,8 @@ try {
             code: "return await math.add({ a: 10, b: 4 });",
           },
         });
-        assert.deepEqual(executeResult.structuredContent, { sum: 14 });
+        assertExecutionValue(executeResult, { sum: 14 });
+        await testExecutionResults((args) => client.callTool({ name: "execute_code", arguments: args }));
       },
     );
 
@@ -404,7 +417,7 @@ try {
             code: 'return await jsmcp.memory.get("shared");',
           },
         });
-        assert.deepEqual(memoryResult.structuredContent, { value: 5 });
+        assertExecutionValue(memoryResult, { value: 5 });
       },
     );
 
@@ -474,7 +487,8 @@ try {
     const restExecuteResult = await postApi(proxyPort, apiKey, "execute_code", restSessionId, "work", {
       code: 'console.log("rest log"); return await math.add({ a: 6, b: 7 });',
     });
-    assert.deepEqual(restExecuteResult.structuredContent, { sum: 13 });
+    assertExecutionValue(restExecuteResult, { sum: 13 });
+    await testExecutionResults((args) => postApi(proxyPort, apiKey, "execute_code", restSessionId, "work", args));
 
     const restLogsResult = await postApi(proxyPort, apiKey, "fetch_logs", restSessionId, "work", {});
     assert.equal(restLogsResult.structuredContent.logs.length, 1);
@@ -654,7 +668,7 @@ try {
             code: 'return await math.repeat({ text: "x", times: 2 });',
           },
         });
-        assert.deepEqual(afterChange.structuredContent, { value: "xx" });
+        assertExecutionValue(afterChange, { value: "xx" });
       },
     );
 
@@ -691,6 +705,85 @@ try {
   }
 } finally {
   await rm(tempConfigHome, { recursive: true, force: true });
+}
+
+function assertExecutionTiming(result) {
+  const { executionMs } = result.structuredContent;
+  assert(Number.isInteger(executionMs));
+  assert(executionMs >= 0);
+  return executionMs;
+}
+
+function assertExecutionValue(result, expected) {
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(Object.keys(result.structuredContent).sort(), ["executionMs", "value"]);
+  assert.deepEqual(result.structuredContent.value, expected);
+  assertExecutionTiming(result);
+}
+
+// The same contract must hold over direct stdio, the WebSocket proxy, and HTTP.
+async function testExecutionResults(call) {
+  const values = [
+    { sum: 7 },
+    { value: "user value", executionMs: "user timing", error: "user data" },
+    [1, "two", { nested: true }],
+    42,
+    false,
+    null,
+    "",
+    'line one\n"quoted" \\path\n雪',
+    '{"looks":"like JSON"}',
+  ];
+
+  for (const value of values) {
+    for (const rawText of [undefined, true, false]) {
+      const result = await call({
+        code: "return data.value;",
+        data: { value },
+        ...(rawText === undefined ? {} : { rawText }),
+      });
+      assertExecutionValue(result, value);
+      if (typeof value === "string" && rawText !== false) {
+        assert.deepEqual(result.content, [
+          { type: "text", text: value },
+          { type: "text", text: `Execution time: ${result.structuredContent.executionMs}ms` },
+        ]);
+      } else {
+        assert.equal(result.content.length, 1);
+        assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+      }
+    }
+  }
+
+  assertExecutionValue(await call({ code: "return;" }), null);
+  assertExecutionValue(await call({ code: "return 123n;" }), "123");
+
+  const delayed = await call({
+    code: "await new Promise((resolve) => setTimeout(resolve, 60)); return { waited: true };",
+  });
+  assertExecutionValue(delayed, { waited: true });
+  assert(delayed.structuredContent.executionMs >= 40, "Timing must include awaited work.");
+
+  for (const [args, pattern] of [
+    [{ code: 'throw new Error("execution failed");' }, /execution failed/],
+    [{ code: "return (;" }, /Unexpected token/],
+    [{ code: "await new Promise(() => {});", timeoutMs: 20 }, /exceeded 20ms/],
+    [{ code: "while (true) {}", timeoutMs: 20 }, /timed out/],
+  ]) {
+    const result = await call(args);
+    assert.equal(result.isError, true);
+    assert.deepEqual(Object.keys(result.structuredContent).sort(), ["error", "executionMs"]);
+    assert.match(result.structuredContent.error, pattern);
+    const executionMs = assertExecutionTiming(result);
+    assert.deepEqual(result.content, [
+      { type: "text", text: result.structuredContent.error },
+      { type: "text", text: `Execution time: ${executionMs}ms` },
+    ]);
+  }
+
+  const invalidOption = await call({ code: "return 1;", rawText: "false" });
+  assert.equal(invalidOption.isError, true);
+  assert.match(invalidOption.content[0].text, /rawText/);
 }
 
 async function writeConfig(config) {

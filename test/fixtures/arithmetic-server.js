@@ -42,7 +42,7 @@ server.registerTool(
 server.registerTool(
   "repeat-text",
   {
-    description: "Repeat text with a dashed tool name",
+    description: "Repeat text with a dashed tool name (text-only result)",
     inputSchema: z.object({
       text: z.string(),
       times: z.number().int().min(1).max(5),
@@ -50,7 +50,6 @@ server.registerTool(
   },
   async ({ text, times }) => ({
     content: [{ type: "text", text: text.repeat(times) }],
-    structuredContent: { value: text.repeat(times) },
   }),
 );
 

@@ -91,6 +91,17 @@ Use `jsmcp auth` to manage OAuth for remote servers. With no arguments it lists 
 
 If no graphical environment is detected, or if you pass `--no-browser`, `jsmcp auth <server>` prints the authorization URL and waits for either the localhost callback or a pasted callback URL/code.
 
+## Pi Extension
+
+The Pi extension lives in [`extensions/pi/`](extensions/pi/README.md). To load it directly from this checkout, run from the repository root:
+
+```bash
+mkdir -p ~/.pi/agent/extensions
+ln -s "$PWD/extensions/pi" ~/.pi/agent/extensions/jsmcp
+```
+
+Move any existing standalone copy aside before creating the link. Start `jsmcp server` separately, then run `/reload` in Pi. The extension exposes the five meta tools with a `jsmcp_` prefix, including `jsmcp_execute_code` with `rawText`, timing, and session memory support. See its README for configuration and tests.
+
 ## systemd User Service
 
 This repo includes `systemd/jsmcp.service`, a user unit that starts `jsmcp server` from the globally installed CLI.
@@ -268,7 +279,7 @@ OAuth tokens and registration state are stored in `$XDG_DATA_HOME/jsmcp/oauth.js
 - `list_servers()` is the required first step so the agent can learn what capabilities are available
 - you must call `list_tools(server)` before using a server in `execute_code()` so you know the exact tool names, aliases, and schemas
 - `list_servers()` and `list_tools(server)` return only the servers and tools allowed in the connection's selected profile
-- `execute_code({ code, data?, timeoutMs? })` does not manage server lifecycle; it can only use servers that are already started
+- `execute_code({ code, data?, timeoutMs?, rawText? })` does not manage server lifecycle; it can only use servers that are already started
 - prefer `execute_code({ code, ... })` whenever the work would require more than a single tool call
 - `execute_code()` exposes session-scoped in-memory JSON storage at `jsmcp.memory`
 - `console.log`, `console.info`, `console.warn`, and `console.error` inside `execute_code()` are stored for `fetch_logs()`
@@ -312,13 +323,56 @@ return results.slice(0, 3);
 
 Available methods are `get(key, defaultValue?)`, `set(key, value)`, `has(key)`, `delete(key)`, `keys()`, `entries()`, `clear()`, and `update(key, updater)`. Stored values are converted with the same JSON-safe conversion used for `execute_code()` results. Memory is in-process only and is cleared when `jsmcp` exits.
 
-If the MCP tool returns `structuredContent`, that is what the JavaScript call resolves to. So the example above can return:
+### Results and execution time
+
+Successful `execute_code` responses always put the JSON-safe return value in `structuredContent.value`, including objects, arrays, strings, and primitives. Returning nothing produces `value: null`. For example, `return await math.add({ a: 2, b: 5 });` produces:
 
 ```json
 {
-  "sum": 7
+  "value": { "sum": 7 },
+  "executionMs": 12
 }
 ```
+
+`executionMs` is elapsed wall-clock time in rounded milliseconds, measured around runtime execution (including awaited tool calls and result conversion, but not response formatting or transport). Execution errors use `{ "error": "message", "executionMs": 12 }` with `isError: true`, including syntax errors and timeouts.
+
+**Compatibility:** object results used to appear directly in `structuredContent`. Callers must now read `structuredContent.value` instead. Other meta tools' response shapes are unchanged.
+
+The optional boolean `rawText` defaults to `true`. When the returned value is a string, `content[0].text` contains that string verbatim, without JSON quoting or escaped newlines. A separate text block reports `Execution time: <n>ms`. The structured envelope is still provided for programmatic callers.
+
+For example, call:
+
+```json
+{
+  "code": "return data.message;",
+  "data": { "message": "Hello\nworld" }
+}
+```
+
+The first text block is:
+
+```text
+Hello
+world
+```
+
+Pass `rawText: false` to render the entire `{ value, executionMs }` envelope as JSON text instead. Non-string results always use JSON text. Errors retain plain error text with a separate timing block. These options behave identically over stdio, WebSocket, and HTTP. Clients that display `structuredContent` rather than `content` may still show JSON.
+
+### Connected MCP tool results
+
+Calls inside your JavaScript are automatically unwrapped; agents do **not** need to access `.structuredContent` themselves:
+
+- If an upstream tool returns `structuredContent`, the call resolves to that object.
+- Otherwise, text-only content resolves to a string (multiple text blocks are joined with newlines). JSON-looking text is not automatically parsed.
+- Otherwise, mixed/non-text content resolves to `{ text, content, meta }`, preserving the content blocks.
+- Upstream `isError` results throw an error.
+
+```js
+const result = await math.add({ a: 2, b: 5 });
+return result.sum; // 7, not result.structuredContent.sum
+```
+
+Only the outer `execute_code` response adds `{ value, executionMs }`; upstream objects are not otherwise flattened. To display a string field directly, return that field rather than its containing object.
 
 If a tool name is not a valid JavaScript identifier, prefer its underscore alias:
 

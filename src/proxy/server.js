@@ -7,14 +7,13 @@ import { apiKeysEqual, loadOrCreateApiKey } from "../api-key.js";
 import {
   API_KEY_HEADER,
   DEFAULT_BIND_HOST,
-  DEFAULT_CODE_TIMEOUT_MS,
   DEFAULT_PROXY_PATH,
   SERVER_NAME,
   SESSION_ID_PATTERN,
 } from "../constants.js";
+import { executeCodeTool } from "../execute-code.js";
 import { createMetaServer } from "../meta-server.js";
 import {
-  formatExecutionValue,
   renderClearLogsText,
   renderLogsText,
   renderServerListText,
@@ -237,21 +236,7 @@ async function handleHttpRequest(request, response, runtime, apiKey, presetName,
       return;
     }
 
-    try {
-      const timeoutMs = validateOptionalTimeoutMs(body.timeoutMs);
-      const value = await runtime.executeCode(body.code, timeoutMs ?? DEFAULT_CODE_TIMEOUT_MS, sessionId, body.data, profileName);
-      const structuredContent = value && typeof value === "object" && !Array.isArray(value) ? value : { value };
-      writeJson(response, 200, {
-        content: [{ type: "text", text: formatExecutionValue(structuredContent) }],
-        structuredContent,
-      });
-    } catch (error) {
-      writeJson(response, 200, {
-        content: [{ type: "text", text: getErrorMessage(error) }],
-        structuredContent: { error: getErrorMessage(error) },
-        isError: true,
-      });
-    }
+    writeJson(response, 200, await executeCodeTool(runtime, body, sessionId, profileName));
     return;
   }
 
@@ -321,18 +306,6 @@ function validateOptionalSessionId(sessionId) {
   }
 
   return sessionId;
-}
-
-function validateOptionalTimeoutMs(timeoutMs) {
-  if (timeoutMs === undefined || timeoutMs === null) {
-    return undefined;
-  }
-
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300000) {
-    throw new Error('Field "timeoutMs" must be an integer from 1 to 300000.');
-  }
-
-  return timeoutMs;
 }
 
 function writeJson(response, statusCode, value) {

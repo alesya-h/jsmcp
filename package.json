@@ -21,6 +21,7 @@
   },
   "files": [
     "src",
+    "extensions",
     "README.md",
     "LICENSE"
   ],
@@ -34,7 +35,8 @@
   "scripts": {
     "start": "node src/index.js run",
     "check": "node --check src/index.js",
-    "test": "node test/smoke-test.js && node test/auth-cli-test.js && node test/config-file-test.js"
+    "test": "node test/smoke-test.js && node test/auth-cli-test.js && node test/config-file-test.js",
+    "test:pi": "node --experimental-strip-types test/pi-extension-test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
