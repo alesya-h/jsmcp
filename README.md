@@ -62,7 +62,7 @@ If you are running from a source checkout instead of an installed package, repla
 
 `run` starts the meta-MCP server directly over stdio.
 
-`server` starts a long-lived daemon on `ws://<bind>:<port>/mcp`, starts every globally enabled MCP server once, and keeps those underlying connections warm. The chosen preset becomes the default profile for connections that do not request one. It binds to `0.0.0.0` by default and accepts `--bind <host>` to choose another bind address.
+`server` starts a long-lived daemon on `ws://<bind>:<port>/mcp`, starts every globally enabled MCP server once, and keeps those underlying connections warm. The chosen preset becomes the default profile for connections that do not request one. It binds to `127.0.0.1` by default, so only clients on the same machine can connect. To accept connections from other machines, set `jsmcp.bind` in the config (for example `"0.0.0.0"`) or pass `--bind <host>`, which takes precedence over the config. Anyone who can reach the port and has the API key can run code as the daemon's user, so only expose it on networks you trust. Before 1.8.0 the default was `0.0.0.0`: if you relied on that, add `bind: "0.0.0.0"` under `jsmcp` in the config before upgrading.
 
 `client` exposes a stdio MCP server that proxies raw MCP/JSON-RPC messages to `server` over WebSocket. It accepts `--host <host>` and `--port <number>` to choose which daemon to connect to, can optionally pass `--profile <name>` to select that daemon-side profile, accepts `--session-id <id>` to reuse the same daemon-side log session across client reconnects, and accepts `--api-key <key>` to authenticate with a daemon whose API key differs from the local key file.
 
@@ -157,6 +157,7 @@ Supported `jsmcp` fields:
 
 - `auto_strip_tool_prefixes`: optional boolean; default `false`; if `true`, servers infer and strip shared tool-name prefixes unless overridden by `servers.<name>.strip_tool_prefix`
 - `normalize_tool_names`: optional boolean; default `false`; if `true`, servers expose tool names as `snake_case` unless overridden by `servers.<name>.normalize_tool_names`
+- `bind`: optional string; the address `jsmcp server` listens on when `--bind` is not given. Default `127.0.0.1`. Use `"0.0.0.0"` to accept connections from other machines.
 
 For local / stdio servers:
 

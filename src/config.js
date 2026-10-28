@@ -13,6 +13,7 @@ const CONFIG_FILE_NAMES = ["config.json", "config.yaml", "config.yml"];
 const DEFAULT_JSMCP_CONFIG = {
   autoStripToolPrefixes: false,
   normalizeToolNames: false,
+  bind: undefined,
 };
 
 export function resolveConfigDirectory() {
@@ -84,7 +85,18 @@ function normalizeJsmcpConfig(config) {
       object.normalize_tool_names,
       'Config field "jsmcp.normalize_tool_names"',
     ) ?? DEFAULT_JSMCP_CONFIG.normalizeToolNames,
+    bind: normalizeOptionalHost(object.bind, 'Config field "jsmcp.bind"'),
   };
+}
+
+function normalizeOptionalHost(value, label) {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  return value.trim();
 }
 
 function normalizeOptionalBoolean(value, label) {

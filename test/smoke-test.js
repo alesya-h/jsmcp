@@ -536,7 +536,7 @@ try {
     env,
     stdio: ["ignore", "ignore", "pipe"],
   });
-  await waitForDaemonReady(restartChild, `server listening on ws://0.0.0.0:${restartPort}/mcp`);
+  await waitForDaemonReady(restartChild, `server listening on ws://127.0.0.1:${restartPort}/mcp`);
   const { stdout: restartOutput } = await execFileAsync(
     "node",
     [metaServerPath, "restart", "--port", String(restartPort)],
@@ -837,7 +837,7 @@ async function startDaemon(env, options) {
       : useProfileFlag
         ? ["--profile", presetName]
         : [presetName];
-  const readyText = `server listening on ws://0.0.0.0:${port}/mcp`;
+  const readyText = `server listening on ws://127.0.0.1:${port}/mcp`;
   let child = spawn("node", [metaServerPath, "server", ...profileArgs, "--port", String(port)], {
     env,
     stdio: ["ignore", "ignore", "pipe"],

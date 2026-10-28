@@ -4,7 +4,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { handleAuthCommand } from "./auth.js";
 import {
-  DEFAULT_BIND_HOST,
   DEFAULT_CLIENT_HOST,
   DEFAULT_PRESET,
   DEFAULT_PROXY_PORT,
@@ -101,7 +100,8 @@ function parseRunCommandArgs(command, args) {
   let port = DEFAULT_PROXY_PORT;
   let sessionId;
   let apiKey;
-  let bindHost = DEFAULT_BIND_HOST;
+  // Undefined unless --bind is given, so the server can fall back to jsmcp.bind in the config.
+  let bindHost;
   let host = DEFAULT_CLIENT_HOST;
 
   for (let index = 0; index < args.length; index += 1) {

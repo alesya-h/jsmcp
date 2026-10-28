@@ -25,9 +25,11 @@ import { WebSocketServerTransport } from "./websocket-server-transport.js";
 
 const MCP_SUBPROTOCOL = "mcp";
 
-export async function runProxyServer({ presetName, port, bindHost = DEFAULT_BIND_HOST }) {
+export async function runProxyServer({ presetName, port, bindHost }) {
   const apiKey = await loadOrCreateApiKey();
   const runtime = await MetaMcpRuntime.load(presetName);
+  // --bind wins, then jsmcp.bind from the config, then loopback only.
+  const host = bindHost ?? runtime.jsmcpConfig.bind ?? DEFAULT_BIND_HOST;
   runtime.validateProfile(presetName);
   await runtime.startAllServers();
 
@@ -139,10 +141,15 @@ export async function runProxyServer({ presetName, port, bindHost = DEFAULT_BIND
     void shutdown().finally(() => process.exit(0));
   });
 
-  await listen(httpServer, port, bindHost);
+  await listen(httpServer, port, host);
   console.error(
-    `[${SERVER_NAME}] server listening on ws://${formatHostForUrl(bindHost)}:${port}${DEFAULT_PROXY_PATH} with default profile "${presetName}"`,
+    `[${SERVER_NAME}] server listening on ws://${formatHostForUrl(host)}:${port}${DEFAULT_PROXY_PATH} with default profile "${presetName}"`,
   );
+  if (!isLoopbackHost(host)) {
+    console.error(
+      `[${SERVER_NAME}] reachable from other machines: anyone who can reach port ${port} with the API key can run code as this user.`,
+    );
+  }
 }
 
 async function handleHttpRequest(request, response, runtime, apiKey, presetName, requestRestart) {
@@ -368,4 +375,8 @@ async function closeWebSocketServer(server) {
   await new Promise((resolve) => {
     server.close(() => resolve());
   });
+}
+
+function isLoopbackHost(host) {
+  return host === "localhost" || host === "::1" || /^127\./.test(host);
 }
