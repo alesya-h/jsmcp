@@ -14,7 +14,7 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.8"
   },
   "bin": {
     "jsmcp": "src/index.js"
@@ -35,7 +35,7 @@
   "scripts": {
     "start": "node src/index.js run",
     "check": "node --check src/index.js",
-    "test": "node test/smoke-test.js && node test/auth-cli-test.js && node test/config-file-test.js",
+    "test": "node test/smoke-test.js && node test/auth-cli-test.js && node test/config-file-test.js && node test/sandbox-test.js",
     "test:pi": "node --experimental-strip-types test/pi-extension-test.js"
   },
   "dependencies": {

@@ -1,4 +1,3 @@
-import vm from "node:vm";
 import { inspect } from "node:util";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -19,7 +18,8 @@ import {
   normalizeServerEntries,
   resolveAuthStorePath,
 } from "./config.js";
-import { cloneJson, closeClient, getErrorMessage, toJsonSafe, withTimeout } from "./utils.js";
+import { ScriptSandbox } from "./sandbox/index.js";
+import { cloneJson, closeClient, getErrorMessage, toJsonSafe } from "./utils.js";
 
 const DEFAULT_LOG_SESSION = "__default__";
 
@@ -39,6 +39,7 @@ export class MetaMcpRuntime {
     this.logsBySession = new Map();
     this.memoryBySession = new Map();
     this.nextLogId = 1;
+    this.sandbox = new ScriptSandbox();
   }
 
   static async load(presetName) {
@@ -164,78 +165,71 @@ export class MetaMcpRuntime {
       throw new Error("No servers are started. Call list_servers first.");
     }
 
-    const contextValues = this.buildSandboxContext(profileName, sessionId, data);
-    const context = vm.createContext(contextValues);
-    context.globalThis = context;
-
-    const script = new vm.Script(`(async () => {\n"use strict";\n${code}\n})()`, {
-      filename: "execute_code.js",
-    });
-
-    const execution = Promise.resolve(script.runInContext(context, { timeout: timeoutMs }));
-    const result = await withTimeout(execution, timeoutMs, `Code execution exceeded ${timeoutMs}ms.`);
-    return toJsonSafe(result);
-  }
-
-  buildSandboxContext(profileName, sessionId, data) {
-    const profileEntries = this.getProfileEntries(profileName);
-    const context = {
-      console: createCapturedConsole(this, sessionId),
+    const namespaces = this.buildScriptNamespaces(profileName);
+    return await this.sandbox.execute({
+      code,
       data: toJsonSafe(data),
-      URL,
-      TextEncoder,
-      TextDecoder,
-      setTimeout,
-      clearTimeout,
-      setInterval,
-      clearInterval,
-    };
+      namespaces,
+      timeoutMs,
+      onLog: (level, values) => this.appendLog(level, values, sessionId),
+      onRequest: async (request) => {
+        if (request?.k === "call") {
+          if (typeof request.server !== "string" || !Object.hasOwn(namespaces, request.server)) {
+            throw new Error(`Server "${request.server}" is not available in this profile.`);
+          }
+          return await this.callTool(profileName, request.server, String(request.tool), request.args ?? {}, request.options ?? {});
+        }
+        if (request?.k === "memory") {
+          return this.handleMemoryRequest(profileName, sessionId, request);
+        }
+        throw new Error("Unknown request from execute_code.");
+      },
+    });
+  }
 
-    for (const [serverName, profileEntry] of profileEntries) {
+  // Describes each allowed server's tools to the sandbox: exposed name (or underscore alias) -> tool name.
+  buildScriptNamespaces(profileName) {
+    const namespaces = {};
+
+    for (const [serverName, profileEntry] of this.getProfileEntries(profileName)) {
       const started = this.startedServers.get(serverName);
-      if (started) {
-        context[serverName] = this.createServerLibrary(
-          profileName,
-          serverName,
-          filterTools(started.tools, profileEntry.toolPolicy),
-        );
+      if (!started) {
+        continue;
       }
+
+      const tools = {};
+      for (const tool of filterTools(started.tools, profileEntry.toolPolicy)) {
+        tools[tool.name] = tool.name;
+        const alias = createToolAlias(tool.name);
+        if (alias && tools[alias] === undefined) {
+          tools[alias] = tool.name;
+        }
+      }
+      namespaces[serverName] = tools;
     }
 
-    context.jsmcp = Object.freeze({
-      memory: this.createSessionMemory(profileName, sessionId),
-    });
-
-    return context;
+    return namespaces;
   }
 
-  createSessionMemory(profileName, sessionId) {
-    return Object.freeze({
-      get: (...args) => this.getMemoryValue(profileName, sessionId, args[0], args[1], args.length >= 2),
-      set: (key, value) => this.setMemoryValue(profileName, sessionId, key, value),
-      has: (key) => this.hasMemoryValue(profileName, sessionId, key),
-      delete: (key) => this.deleteMemoryValue(profileName, sessionId, key),
-      keys: () => this.getMemoryKeys(profileName, sessionId),
-      entries: () => this.getMemoryEntries(profileName, sessionId),
-      clear: () => this.clearMemory(profileName, sessionId),
-      update: (key, updater) => this.updateMemoryValue(profileName, sessionId, key, updater),
-    });
-  }
-
-  createServerLibrary(profileName, serverName, tools) {
-    const library = Object.create(null);
-
-    for (const tool of tools) {
-      const callable = async (args = {}, options = {}) => this.callTool(profileName, serverName, tool.name, args, options);
-      library[tool.name] = callable;
-
-      const alias = createToolAlias(tool.name);
-      if (alias && library[alias] === undefined) {
-        library[alias] = callable;
-      }
+  handleMemoryRequest(profileName, sessionId, { op, args = [], hasDefault = false }) {
+    switch (op) {
+      case "get":
+        return this.getMemoryValue(profileName, sessionId, args[0], args[1], hasDefault === true);
+      case "set":
+        return this.setMemoryValue(profileName, sessionId, args[0], args[1]);
+      case "has":
+        return this.hasMemoryValue(profileName, sessionId, args[0]);
+      case "delete":
+        return this.deleteMemoryValue(profileName, sessionId, args[0]);
+      case "keys":
+        return this.getMemoryKeys(profileName, sessionId);
+      case "entries":
+        return this.getMemoryEntries(profileName, sessionId);
+      case "clear":
+        return this.clearMemory(profileName, sessionId);
+      default:
+        throw new Error(`Unknown jsmcp.memory operation "${op}".`);
     }
-
-    return Object.freeze(library);
   }
 
   async callTool(profileName = this.defaultProfileName, serverName, toolName, args = {}, options = {}) {
@@ -333,16 +327,6 @@ export class MetaMcpRuntime {
     return cleared;
   }
 
-  async updateMemoryValue(profileName, sessionId, key, updater) {
-    if (typeof updater !== "function") {
-      throw new Error("jsmcp.memory.update requires an updater function.");
-    }
-
-    const currentValue = this.getMemoryValue(profileName, sessionId, key);
-    const nextValue = await updater(currentValue);
-    return this.setMemoryValue(profileName, sessionId, key, nextValue);
-  }
-
   requireServerEntry(name) {
     const entry = this.serverEntries.get(name);
     if (!entry) {
@@ -391,7 +375,7 @@ export class MetaMcpRuntime {
     this.pendingStarts.clear();
     this.logsBySession.clear();
     this.memoryBySession.clear();
-    await Promise.allSettled(servers.map((server) => closeClient(server.client)));
+    await Promise.allSettled([this.sandbox.close(), ...servers.map((server) => closeClient(server.client))]);
   }
 
   getSessionLogs(sessionId) {
@@ -689,15 +673,4 @@ function normalizeMemoryKey(key) {
 
 function cloneJsonSafe(value) {
   return cloneJson(toJsonSafe(value));
-}
-
-function createCapturedConsole(runtime, sessionId) {
-  const write = (level, values) => runtime.appendLog(level, values, sessionId);
-
-  return {
-    log: (...values) => write("log", values),
-    info: (...values) => write("info", values),
-    warn: (...values) => write("warn", values),
-    error: (...values) => write("error", values),
-  };
 }

@@ -36,6 +36,8 @@ This is especially useful when an agent needs to:
 npm install -g @alesya_h/jsmcp
 ```
 
+Requires Node.js 22.8 or later.
+
 Or run it without installing globally:
 
 ```bash
@@ -295,6 +297,22 @@ Started servers are injected as globals. Each allowed MCP tool becomes a functio
 If you pass `data`, it is exposed to the script as the global variable `data`. This is useful for strings or structured values that would otherwise need escaping inside the code string.
 
 You should call `list_tools(server)` before using a server in `execute_code()`. For multi-step work, prefer writing JavaScript instead of trying to mentally chain several tool calls.
+
+### The script environment
+
+Each script runs in its own worker thread, inside a fresh JavaScript environment that contains nothing from Node.js: no `process`, `require`, `fetch`, `Buffer` or `URL`; no `eval`, `new Function` or WebAssembly; and no `SharedArrayBuffer`, `Atomics` or `FinalizationRegistry`. Besides the standard JavaScript built-ins, a script has:
+
+- the allowed servers, as globals, and `data`
+- `console.log`, `console.info`, `console.warn` and `console.error`
+- `jsmcp.memory`
+- `setTimeout`, `setInterval`, `clearTimeout` and `clearInterval`; timers still pending when the script finishes are cancelled
+- `TextEncoder` and `TextDecoder` (UTF-8)
+
+The environment and jsmcp exchange only JSON, so a script can't reach jsmcp's own objects, files, credentials or the tools outside its profile. Built-ins and their global names are frozen, so a script can't tamper with them. Each script starts from a clean environment: globals don't carry over between calls (use `jsmcp.memory` for that).
+
+A script is stopped at its timeout, or if it uses more than 512 MB of memory; either way the daemon and other scripts carry on.
+
+The environment is a boundary within one process: it doesn't protect against bugs in V8 itself. To limit what jsmcp as a whole can reach, run it under a sandbox such as [bubblewrap](https://github.com/containers/bubblewrap).
 
 Example:
 
