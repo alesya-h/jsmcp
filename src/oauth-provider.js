@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { DEFAULT_OAUTH_CALLBACK_URL } from "./constants.js";
+import { cloneJson } from "./utils.js";
 
 class AuthRequiredError extends Error {
   constructor(serverName) {
@@ -18,6 +19,24 @@ class PersistentOAuthProvider {
     this.mode = mode;
     this.onRedirect = onRedirect;
     this._oauthConfig = serverConfig.oauth || { enabled: true };
+    // Explicit auth starts fresh, but must not replace working credentials until
+    // the token exchange succeeds. Discovery, registration and PKCE stay staged.
+    this.pendingState = mode === "interactive" ? {} : undefined;
+  }
+
+  async getState() {
+    if (this.pendingState !== undefined) {
+      return cloneJson(this.pendingState);
+    }
+    return await this.authStore.getServerState(this.serverName);
+  }
+
+  async updateState(updater) {
+    if (this.pendingState !== undefined) {
+      this.pendingState = cloneJson(updater(cloneJson(this.pendingState)));
+      return;
+    }
+    await this.authStore.updateServerState(this.serverName, updater);
   }
 
   get redirectUrl() {
@@ -47,12 +66,12 @@ class PersistentOAuthProvider {
       };
     }
 
-    const state = await this.authStore.getServerState(this.serverName);
+    const state = await this.getState();
     return state.clientInformation;
   }
 
   async saveClientInformation(clientInformation) {
-    await this.authStore.updateServerState(this.serverName, (state) => ({
+    await this.updateState((state) => ({
       ...state,
       clientInformation,
       redirectUrl: String(this._redirectUrl),
@@ -60,16 +79,19 @@ class PersistentOAuthProvider {
   }
 
   async tokens() {
-    const state = await this.authStore.getServerState(this.serverName);
+    const state = await this.getState();
     return state.tokens;
   }
 
   async saveTokens(tokens) {
-    await this.authStore.updateServerState(this.serverName, (state) => ({
+    await this.updateState((state) => ({
       ...state,
       tokens,
       redirectUrl: String(this._redirectUrl),
     }));
+    if (this.pendingState !== undefined) {
+      await this.authStore.setServerState(this.serverName, this.pendingState);
+    }
   }
 
   async redirectToAuthorization(authorizationUrl) {
@@ -83,7 +105,7 @@ class PersistentOAuthProvider {
   }
 
   async saveCodeVerifier(codeVerifier) {
-    await this.authStore.updateServerState(this.serverName, (state) => ({
+    await this.updateState((state) => ({
       ...state,
       codeVerifier,
       redirectUrl: String(this._redirectUrl),
@@ -91,7 +113,7 @@ class PersistentOAuthProvider {
   }
 
   async codeVerifier() {
-    const state = await this.authStore.getServerState(this.serverName);
+    const state = await this.getState();
     if (!state.codeVerifier) {
       throw new Error(`No code verifier saved for server "${this.serverName}".`);
     }
@@ -99,7 +121,7 @@ class PersistentOAuthProvider {
   }
 
   async saveDiscoveryState(discoveryState) {
-    await this.authStore.updateServerState(this.serverName, (state) => ({
+    await this.updateState((state) => ({
       ...state,
       discoveryState,
       redirectUrl: String(this._redirectUrl),
@@ -107,12 +129,12 @@ class PersistentOAuthProvider {
   }
 
   async discoveryState() {
-    const state = await this.authStore.getServerState(this.serverName);
+    const state = await this.getState();
     return state.discoveryState;
   }
 
   async invalidateCredentials(scope) {
-    await this.authStore.updateServerState(this.serverName, (state) => {
+    await this.updateState((state) => {
       const nextState = { ...state };
 
       if (scope === "all") {

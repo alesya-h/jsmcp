@@ -89,7 +89,7 @@ POST /api/restart
 
 The `/api/call` request body is a JSON object matching the selected MCP tool arguments. HTTP callers may include `sessionId` in the query string to use a stable daemon-side log session. They may include `profile` to select which profile filters the server and tool view for that request.
 
-Use `jsmcp auth` to manage OAuth for remote servers. With no arguments it lists remote servers that have OAuth enabled. With a server name it starts the OAuth flow for that server.
+Use `jsmcp auth` to manage OAuth for remote servers. With no arguments it lists remote servers that have OAuth enabled. With a server name it starts a fresh OAuth flow, rediscovering the authorization server instead of reusing cached registration or tokens. Pending discovery, registration, and PKCE state stay in memory; saved credentials are replaced only after a successful token exchange. Cancelling or failing authorization leaves the previous saved state unchanged. After successful authorization, restart any running daemon with `jsmcp restart` so it loads the new credentials.
 
 If no graphical environment is detected, or if you pass `--no-browser`, `jsmcp auth <server>` prints the authorization URL and waits for either the localhost callback or a pasted callback URL/code.
 

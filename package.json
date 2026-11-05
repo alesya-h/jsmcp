@@ -1,6 +1,6 @@
 {
   "name": "@alesya_h/jsmcp",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "MCP server that allows agents to work with other MCP tools programmatically by writing JavaScript",
   "license": "MIT",
   "author": "Alesya Huzik",
@@ -35,7 +35,7 @@
   "scripts": {
     "start": "node src/index.js run",
     "check": "node --check src/index.js",
-    "test": "node test/smoke-test.js && node test/auth-cli-test.js && node test/config-file-test.js && node test/sandbox-test.js",
+    "test": "node test/smoke-test.js && node test/auth-cli-test.js && node test/oauth-provider-test.js && node test/config-file-test.js && node test/sandbox-test.js",
     "test:pi": "node --experimental-strip-types test/pi-extension-test.js"
   },
   "dependencies": {
